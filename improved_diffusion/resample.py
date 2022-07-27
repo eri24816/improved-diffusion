@@ -84,10 +84,13 @@ class LossAwareSampler(ScheduleSampler):
             th.tensor([0], dtype=th.int32, device=local_ts.device)
             for _ in range(dist.get_world_size())
         ]
+        '''
         dist.all_gather(
             batch_sizes,
             th.tensor([len(local_ts)], dtype=th.int32, device=local_ts.device),
-        )
+        )'''
+
+        batch_sizes = [th.tensor([len(local_ts)], dtype=th.int32, device=local_ts.device)]
 
         # Pad all_gather batches to be the maximum batch size.
         batch_sizes = [x.item() for x in batch_sizes]
@@ -95,8 +98,8 @@ class LossAwareSampler(ScheduleSampler):
 
         timestep_batches = [th.zeros(max_bs).to(local_ts) for bs in batch_sizes]
         loss_batches = [th.zeros(max_bs).to(local_losses) for bs in batch_sizes]
-        dist.all_gather(timestep_batches, local_ts)
-        dist.all_gather(loss_batches, local_losses)
+        #dist.all_gather(timestep_batches, local_ts)
+        #dist.all_gather(loss_batches, local_losses)
         timesteps = [
             x.item() for y, bs in zip(timestep_batches, batch_sizes) for x in y[:bs]
         ]

@@ -5,7 +5,7 @@ Train a diffusion model on images.
 import argparse
 
 from improved_diffusion import dist_util, logger
-from improved_diffusion.image_datasets import load_data
+from utils.pianoroll import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     model_and_diffusion_defaults,
@@ -33,8 +33,7 @@ def main():
     data = load_data(
         data_dir=args.data_dir,
         batch_size=args.batch_size,
-        image_size=args.image_size,
-        class_cond=args.class_cond,
+        segment_length= args.segment_length
     )
 
     logger.log("training...")
@@ -72,6 +71,7 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        segment_length = 0
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

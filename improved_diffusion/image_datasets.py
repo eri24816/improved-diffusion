@@ -1,6 +1,5 @@
 from PIL import Image
 import blobfile as bf
-from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
@@ -37,9 +36,7 @@ def load_data(
     dataset = ImageDataset(
         image_size,
         all_files,
-        classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        classes=classes
     )
     if deterministic:
         loader = DataLoader(
@@ -103,4 +100,4 @@ class ImageDataset(Dataset):
         out_dict = {}
         if self.local_classes is not None:
             out_dict["y"] = np.array(self.local_classes[idx], dtype=np.int64)
-        return np.transpose(arr, [2, 0, 1]), out_dict
+        return np.transpose(arr, [2, 0, 1])[0:1], out_dict

@@ -50,11 +50,12 @@ def main():
         )
         sample = sample_fn(
             model,
-            (args.batch_size, args.num_channels, args.image_size, args.image_size),
+            (args.batch_size, args.segment_length, 88),
             clip_denoised=args.clip_denoised,
             model_kwargs=model_kwargs,
         )
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
+        sample = sample.unsqueeze(1)
         sample = sample.permute(0, 2, 3, 1)
         sample = sample.contiguous()
 
@@ -93,6 +94,7 @@ def create_argparser():
         batch_size=16,
         use_ddim=False,
         model_path="",
+        segment_length = 0
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

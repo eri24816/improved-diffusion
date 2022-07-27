@@ -4,6 +4,8 @@ import inspect
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel
+from .unet2 import UNet2
+from .transformer_unet import TransformerUnet
 
 NUM_CLASSES = 1000
 
@@ -109,6 +111,7 @@ def create_model(
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
 
+    '''
     return UNetModel(
         in_channels=3,
         model_channels=num_channels,
@@ -123,7 +126,17 @@ def create_model(
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
     )
+    '''
+    '''
+    return UNet2(
+        image_channels=1,
+        model_out_channels=(1 if not learn_sigma else 2),
+        n_channels=64,
+        ch_mults=[1, 2, 2, 4],
+        is_attn=[False, False, False, True],
+    )'''
 
+    return TransformerUnet(256,n_blocks=2, learn_sigma= learn_sigma)
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()
