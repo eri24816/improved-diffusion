@@ -18,7 +18,9 @@ from improved_diffusion.script_util import (
     add_dict_to_argparser,
     args_to_dict,
 )
+from utils import pianoroll
 
+from utils.pianoroll import PianoRoll
 
 def main():
     args = create_argparser().parse_args()
@@ -54,6 +56,12 @@ def main():
             clip_denoised=args.clip_denoised,
             model_kwargs=model_kwargs,
         )
+        for i,s in enumerate(sample):
+            # save midi
+            path = os.path.join(logger.get_dir(),'samples/',os.path.basename(args.model_path).split('.')[0]+'/', f"{i}.mid")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
+        
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.unsqueeze(1)
         sample = sample.permute(0, 2, 3, 1)

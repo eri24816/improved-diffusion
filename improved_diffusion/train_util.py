@@ -19,6 +19,8 @@ from .fp16_util import (
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
 
+import torchvision
+
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
 # 20-21 within the first ~1K steps of training.
@@ -44,6 +46,7 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        segment_length=0,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -73,6 +76,8 @@ class TrainLoop:
         self.master_params = self.model_params
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
         self.sync_cuda = th.cuda.is_available()
+
+        self.segment_length = segment_length
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -151,12 +156,40 @@ class TrainLoop:
             self.run_step(batch)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
+            if self.step % (self.save_interval//6) == 0:
+                print('Sampling...')
+                all_sample = self.diffusion.p_sample_loop_collect(
+                    self.model,
+                    (5, self.segment_length, 88),
+                    num_imgs = 5
+                )
+
+                sample = all_sample[:,0] # reverse process
+                sample = sample.unsqueeze(1)
+                sample = sample.permute(0, 1, 3, 2)
+                sample = sample.contiguous()
+                scale = 6
+                sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+                logger.write_img((sample+1)/2,'reverse process')
+
+                sample = all_sample[-1] # sample at t = 0
+                sample = sample.unsqueeze(1)
+                sample = sample.permute(0, 1, 3, 2)
+                sample = sample.contiguous()
+                scale = 6
+                sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+                logger.write_img((sample+1)/2,'t = 0 samples')
+
+                logger.write_img((batch[0:1].unsqueeze(1)+1)/2,'training data')
+
             if self.step % self.save_interval == 0:
                 self.save()
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
             self.step += 1
+
+
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()

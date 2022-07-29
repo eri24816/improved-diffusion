@@ -5,7 +5,7 @@ from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel
 from .unet2 import UNet2
-from .transformer_unet import TransformerUnet
+from .transformer_unet import TransformerUnet, PitchAwareTransformerUnet
 
 NUM_CLASSES = 1000
 
@@ -136,7 +136,7 @@ def create_model(
         is_attn=[False, False, False, True],
     )'''
 
-    return TransformerUnet(256,n_blocks=2, learn_sigma= learn_sigma)
+    return TransformerUnet(512,n_blocks=6, learn_sigma= learn_sigma)
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()

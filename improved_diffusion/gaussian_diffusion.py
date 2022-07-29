@@ -428,6 +428,40 @@ class GaussianDiffusion:
             final = sample
         return final["sample"]
 
+    def p_sample_loop_collect(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        num_imgs = 5
+    ):
+        '''
+        output shape : [step, batch, ...]
+        '''
+        save_interval = self.num_timesteps//num_imgs
+        
+        saved = []
+        step = self.num_timesteps
+        for sample in self.p_sample_loop_progressive(
+            model,
+            shape,
+            noise=noise,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+            device=device,
+            progress=progress,
+        ):
+            step -= 1
+            if step%save_interval == 0:
+                saved.append(sample["sample"])
+        return th.stack(saved,dim=0)
+
     def p_sample_loop_progressive(
         self,
         model,

@@ -15,6 +15,8 @@ import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 
+from torch.utils.tensorboard import SummaryWriter
+
 DEBUG = 10
 INFO = 20
 WARN = 30
@@ -239,6 +241,13 @@ def dumpkvs():
     """
     return get_current().dumpkvs()
 
+def write_img(img,tag='0'):
+    """
+    Write all of the diagnostics from the current iteration
+    """
+    return get_current().write_img(img,tag)
+
+
 
 def getkvs():
     return get_current().name2val
@@ -342,6 +351,10 @@ class Logger(object):
         self.output_formats = output_formats
         self.comm = comm
 
+        log_dir = datetime.datetime.now().strftime("%m_%d_%Y/%H_%M_%S")
+        self.writer = SummaryWriter(log_dir=os.path.join('runs/',log_dir))
+        self.step = 0
+
     # Logging API, forwarded
     # ----------------------------------------
     def logkv(self, key, val):
@@ -371,8 +384,24 @@ class Logger(object):
                 fmt.writekvs(d)
         self.name2val.clear()
         self.name2cnt.clear()
+
+        self.step = int(out['step'])
+        for k,v in out.items():
+            self.writer.add_scalar(k,v,self.step)
+
         return out
 
+    def write_img(self,img,tag='0'):
+        img = img.clamp(0,1)
+        self.writer.add_images(tag,img,self.step)
+        '''
+        import matplotlib.pyplot as plt
+        plt.imshow(img[0,0].cpu(),cmap='Greys_r')
+        plt.colorbar()
+        plt.show()
+        plt.savefig('a.png')
+        exit()
+        '''
     def log(self, *args, level=INFO):
         if self.level <= level:
             self._do_log(args)

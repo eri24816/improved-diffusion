@@ -43,7 +43,7 @@ from math import inf, ceil
 import torch
 import glob
 import miditoolkit
-from . import io_util
+from utils import io_util
 
 class PianoRollDataset(Dataset):
     def __init__(self, data_dir, segment_len = 0, max_duration = 32*50):
@@ -69,28 +69,46 @@ class PianoRollDataset(Dataset):
     def __getitem__(self, idx):
         if self.segment_length:
             piece, start, end = self.segment_id_to_piece[idx]
-            return piece.to_tensor(start, end, padding = True)
+            return piece.to_tensor(start, end, padding = True)/64-1 # [-1,1)
         else:
-            return self.pianorolls[idx].to_tensor(0, self.max_duration, padding = True)
+            return self.pianorolls[idx].to_tensor(0, self.max_duration, padding = True)/64-1 # [-1,1)
 
 class PianoRoll:
     @ staticmethod
     def load(path):
         return PianoRoll(io_util.json_load(path))
 
-    def __init__(self, data : dict):
+    @ staticmethod
+    def from_tensor(tens, thres = 5):
+        tens = tens.cpu().to(torch.int32).clamp(0,127)
+        data = {"onset_events":[],"pedal_events":[]}
+        for t in range(tens.shape[0]):
+            for p in range(tens.shape[1]):
+                if tens[t,p] > thres:
+                    data["onset_events"].append([t,p+21,int(tens[t,p])])
+
+        return PianoRoll(data,make_pedal=True)
+
+
+    def __init__(self, data : dict, make_pedal = False):
         # [onset time, pitch, velocity]
         self.notes = data["onset_events"]
-        if len(self.notes[0]) == 4:
+        if len(self.notes) and len(self.notes[0]) == 4:
             self.notes = [[onset,pitch,vel] for onset,pitch,vel,offset in self.notes]
         self.notes = sorted(self.notes) # ensure the event is sorted by time
 
-        # Timestamps of pedal up events. (Otherwise the pedal is always down) 
-        self.pedal = data["pedal_events"]
-        self.pedal = sorted(self.pedal)
+        if len(self.notes):
+            time, pitch, vel = self.notes[-1] # get the last note's onset
+            self.duration = time + 16 # extend a bar to ensure the last note is covered completely
+        else:
+            self.duration = 0
 
-        time, pitch, vel = self.notes[-1] # get the last note's onset
-        self.duration = time + 16 # extend a bar to ensure the last note is covered completely
+        if make_pedal:
+            self.pedal = list(range(0,self.duration,32))
+        else:
+            # Timestamps of pedal up events. (Otherwise the pedal is always down) 
+            self.pedal = data["pedal_events"]
+            self.pedal = sorted(self.pedal)
 
         self.offsets = self.get_offsets_with_pedal()
 
