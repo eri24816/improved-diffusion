@@ -40,6 +40,7 @@ def main():
     logger.log("sampling...")
     all_images = []
     all_labels = []
+    i=0
     while len(all_images) * args.batch_size < args.num_samples:
         model_kwargs = {}
         if args.class_cond:
@@ -56,11 +57,12 @@ def main():
             clip_denoised=args.clip_denoised,
             model_kwargs=model_kwargs,
         )
-        for i,s in enumerate(sample):
+        for s in sample:
             # save midi
-            path = os.path.join(logger.get_dir(),'samples/',os.path.basename(args.model_path).split('.')[0]+'/', f"{i}.mid")
+            path = os.path.join(logger.get_dir(),'samples/',os.path.basename(args.model_path).rsplit( ".", 1 )[ 0 ]+'/', f"{i}.mid")
+            i+=1
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
+            PianoRoll.from_tensor((s+1)*64,thres = 5).to_midi(path)
         
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.unsqueeze(1)

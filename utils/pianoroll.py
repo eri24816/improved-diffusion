@@ -73,13 +73,25 @@ class PianoRollDataset(Dataset):
         else:
             return self.pianorolls[idx].to_tensor(0, self.max_duration, padding = True)/64-1 # [-1,1)
 
+    def get_piano_roll(self, idx):
+        if self.segment_length:
+            piece, start, end = self.segment_id_to_piece[idx]
+            return piece.slice(start, end)
+        else:
+            return self.pianorolls[idx].slice(0, self.max_duration)
+
+    def get_all_piano_rolls(self):
+        return [self.get_piano_roll(i) for i in range(len(self))]
+
 class PianoRoll:
     @ staticmethod
     def load(path):
         return PianoRoll(io_util.json_load(path))
 
     @ staticmethod
-    def from_tensor(tens, thres = 5):
+    def from_tensor(tens, thres = 5, normalized = False):
+        if normalized:
+            tens = (tens+1)*64
         tens = tens.cpu().to(torch.int32).clamp(0,127)
         data = {"onset_events":[],"pedal_events":[]}
         for t in range(tens.shape[0]):
@@ -88,7 +100,15 @@ class PianoRoll:
                     data["onset_events"].append([t,p+21,int(tens[t,p])])
 
         return PianoRoll(data,make_pedal=True)
-
+    
+    @ staticmethod
+    def from_midi(path):
+        midi = miditoolkit.midi.parser.MidiFile(path)
+        data = {"onset_events":[],"pedal_events":[]}
+        for note in midi.instruments[0].notes:
+            note : miditoolkit.Note
+            data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity])
+        return PianoRoll(data,make_pedal=True)
 
     def __init__(self, data : dict, make_pedal = False):
         # [onset time, pitch, velocity]
@@ -112,7 +132,29 @@ class PianoRoll:
 
         self.offsets = self.get_offsets_with_pedal()
 
-    def to_tensor(self, start_time : int = 0, end_time : int = inf, padding = False) -> torch.Tensor:
+    def slice(self,start_time : int = 0, end_time : int = inf):
+        length = end_time - start_time
+        sliced_notes = []
+        sliced_pedal = []
+        for time, pitch, vel in self.notes:
+            rel_time = time - start_time
+            # only contain notes between start_time and end_time
+            if rel_time < 0: continue
+            if rel_time >= length : break
+            sliced_notes.append([rel_time,pitch,vel])
+
+        for pedal in self.pedal:
+            time = pedal
+            rel_time = time - start_time
+            # only contain notes between start_time and end_time
+            if rel_time < 0: continue
+            if rel_time >= length : break
+            sliced_pedal.append(rel_time)
+
+        return PianoRoll({"onset_events":sliced_notes,"pedal_events":sliced_pedal})
+
+
+    def to_tensor(self, start_time : int = 0, end_time : int = inf, padding = False, normalized = False) -> torch.Tensor:
         if padding:
             # zero pad to end_time
             assert end_time != inf
@@ -131,6 +173,8 @@ class PianoRoll:
             pitch -= 21 # midi to piano
             piano_roll[rel_time,pitch] = vel
 
+        if normalized:
+            piano_roll = piano_roll/64-1
         return piano_roll
 
     def save(self,path):
@@ -142,7 +186,7 @@ class PianoRoll:
         i = len(self.pedal)
         for onset, pitch, vel in reversed(self.notes):
             pitch -= 21 # midi number to piano
-            while self.pedal[i-1] > onset and i > 0:
+            while i > 0 and self.pedal[i-1] > onset:
                 i -= 1
             if i == len(self.pedal):
                 next_pedal_up = self.duration
@@ -168,5 +212,11 @@ class PianoRoll:
         if path:
             midi.dump(path)
         return midi
-        
-#d = PianoRollDataset('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll', 2*32)
+
+if __name__ == '__main__':  
+    d = PianoRollDataset('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll', 2*32)
+    orig = d[150]
+    file_name = '/tmp/pianoroll_test.mid'
+    PianoRoll.from_tensor(orig,0,normalized=True).to_midi(file_name)
+    recons = PianoRoll.from_midi(file_name).to_tensor(normalized=True)
+    assert ((orig- recons[:64])**2).sum()==0
