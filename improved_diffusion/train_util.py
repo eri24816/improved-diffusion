@@ -128,7 +128,7 @@ class TrainLoop:
                 )
                 ema_params = self._state_dict_to_master_params(state_dict)
 
-        dist_util.sync_params(ema_params)
+        #dist_util.sync_params(ema_params)
         return ema_params
 
     def _load_optimizer_state(self):

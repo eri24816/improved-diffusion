@@ -1,5 +1,6 @@
 from utils.pianoroll import PianoRoll, PianoRollDataset
 from tqdm import tqdm
+
 def cosine_sim(x,y,eps = 1):
     return ((x*y).sum()+eps)/(x.norm()*y.norm()+eps)
 
@@ -19,15 +20,19 @@ def sort_by_similarity(x: PianoRoll,ys : 'list[PianoRoll]' ,sim_function = cosin
     scores = sorted(scores.values())
     return ys, scores
 
-def check(target_pr, ds):
-    ys, scores = sort_by_similarity(target_pr,ds)
-
-
 
 if __name__ == '__main__':
+    import os
+    from os import path
     data_dir = '/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll'
-    ds = PianoRollDataset(data_dir)
+    ds = PianoRollDataset(data_dir,64).get_all_piano_rolls()
 
-    sample_dir = 'log/2bb/samples/ema_0.9999_1430000/63.mid'
+    sample_dir = 'log/2bb/samples/ema_0.9999_1800000/49.mid'
     target_pr = PianoRoll.from_midi(sample_dir)
-    check(target_pr,ds)
+    #target_pr = ds[0]
+    ys, scores = sort_by_similarity(target_pr,ds,proj_sim)
+
+    for i, y in enumerate(list(reversed(ys))[:10]):
+        p = sample_dir.replace('.mid','sim')+f'/{i}.mid'
+        os.makedirs(path.dirname(p),exist_ok=True)
+        y.to_midi(p)

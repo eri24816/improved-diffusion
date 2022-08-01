@@ -41,7 +41,7 @@ def main():
     all_images = []
     all_labels = []
     i=0
-    while len(all_images) * args.batch_size < args.num_samples:
+    while len(all_images) < args.num_samples:
         model_kwargs = {}
         if args.class_cond:
             classes = th.randint(
@@ -64,36 +64,39 @@ def main():
             os.makedirs(os.path.dirname(path), exist_ok=True)
             PianoRoll.from_tensor((s+1)*64,thres = 5).to_midi(path)
         
+        '''
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
         sample = sample.unsqueeze(1)
         sample = sample.permute(0, 2, 3, 1)
         sample = sample.contiguous()
+        '''
 
-        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
-        #dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
-        gathered_samples = [sample]
-        all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
+        all_images+=[s for s in sample]
         if args.class_cond:
             gathered_labels = [
                 th.zeros_like(classes) for _ in range(dist.get_world_size())
             ]
             #dist.all_gather(gathered_labels, classes)
             all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
-        logger.log(f"created {len(all_images) * args.batch_size} samples")
+        logger.log(f"created {len(all_images) } samples")
 
-    arr = np.concatenate(all_images, axis=0)
-    arr = arr[: args.num_samples]
-    if args.class_cond:
-        label_arr = np.concatenate(all_labels, axis=0)
-        label_arr = label_arr[: args.num_samples]
-    shape_str = "x".join([str(x) for x in arr.shape])
-    out_path = os.path.join(logger.get_dir(), f"samples_{os.path.basename(args.model_path).split('.')[0]}.npz")
-    logger.log(f"saving to {out_path}")
-    if args.class_cond:
-        np.savez(out_path, arr, label_arr)
-    else:
-        np.savez(out_path, arr)
-
+    '''
+        arr = np.concatenate(all_images, axis=0)
+        arr = arr[: args.num_samples]
+        if args.class_cond:
+            label_arr = np.concatenate(all_labels, axis=0)
+            label_arr = label_arr[: args.num_samples]
+        shape_str = "x".join([str(x) for x in arr.shape])
+        out_path = os.path.join(logger.get_dir(), f"samples_{os.path.basename(args.model_path).split('.')[0]}.npz")
+        logger.log(f"saving to {out_path}")
+        if args.class_cond:
+            np.savez(out_path, arr, label_arr)
+        else:
+            np.savez(out_path, arr)
+    '''
+    catted = th.cat(all_images,0) # time dim
+    path = os.path.join(logger.get_dir(),'samples/',os.path.basename(args.model_path).rsplit( ".", 1 )[ 0 ]+'/', "all.mid")
+    PianoRoll.from_tensor((catted+1)*64,thres = 5).to_midi(path)
     logger.log("sampling complete")
 
 

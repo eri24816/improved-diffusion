@@ -146,7 +146,7 @@ class PianoRoll:
         for pedal in self.pedal:
             time = pedal
             rel_time = time - start_time
-            # only contain notes between start_time and end_time
+            # only contain pedal between start_time and end_time
             if rel_time < 0: continue
             if rel_time >= length : break
             sliced_pedal.append(rel_time)
