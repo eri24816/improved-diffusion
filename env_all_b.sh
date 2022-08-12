@@ -6,8 +6,8 @@
 
 # /screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll
 
-export OPENAI_LOGDIR=/screamlab/home/eri24816/improved-diffusion/log/2bb
+export OPENAI_LOGDIR=/screamlab/home/eri24816/improved-diffusion/log/env_all_b
 
-export MODEL_FLAGS="--num_channels 128 --learn_sigma True --segment_length 64"
+export MODEL_FLAGS="--num_channels 128 --learn_sigma True --segment_length 0"
 export DIFFUSION_FLAGS="--diffusion_steps 1000 --noise_schedule cosine"
-export TRAIN_FLAGS="--lr 2e-05 --batch_size 128 --schedule_sampler loss-second-moment --save_interval 50000 --log_interval 200"
+export TRAIN_FLAGS="--lr 2e-05 --batch_size 8 --schedule_sampler loss-second-moment --save_interval 50000 --log_interval 200"

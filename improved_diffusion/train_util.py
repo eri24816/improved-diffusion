@@ -158,29 +158,10 @@ class TrainLoop:
                 logger.dumpkvs()
             if self.step % (self.save_interval//6) == 0:
                 print('Sampling...')
-                all_sample = self.diffusion.p_sample_loop_collect(
-                    self.model,
-                    (5, self.segment_length, 88),
-                    num_imgs = 5
-                )
-
-                sample = all_sample[:,0] # reverse process
-                sample = sample.unsqueeze(1)
-                sample = sample.permute(0, 1, 3, 2)
-                sample = sample.contiguous()
-                scale = 6
-                sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-                logger.write_img((sample+1)/2,'reverse process')
-
-                sample = all_sample[-1] # sample at t = 0
-                sample = sample.unsqueeze(1)
-                sample = sample.permute(0, 1, 3, 2)
-                sample = sample.contiguous()
-                scale = 6
-                sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-                logger.write_img((sample+1)/2,'t = 0 samples')
-
-                logger.write_img((batch[0:1].unsqueeze(1)+1)/2,'training data')
+                self.run_sample()
+                #logger.write_img((batch[0:1,32*32:34*32].transpose(1,2).unsqueeze(1)+1)/2,'training data')
+                logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
+                #self.run_sample_song()
 
             if self.step % self.save_interval == 0:
                 self.save()
@@ -201,6 +182,57 @@ class TrainLoop:
         else:
             self.optimize_normal()
         self.log_step()
+
+    def run_sample(self):
+        all_sample = self.diffusion.p_sample_loop_collect(
+            self.model,
+            (5, self.segment_length, 88),
+            num_imgs = 5
+        )
+
+        sample = all_sample[:,0] # reverse process
+        sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        scale = 6
+        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,'reverse process')
+
+        sample = all_sample[-1] # sample at t = 0
+        sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        scale = 6
+        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,'t = 0 samples')
+
+        
+
+    def run_sample_song(self):
+        all_sample = self.diffusion.p_sample_loop_collect(
+            self.model,
+            (1, 32*180, 88),
+            num_imgs = 5
+        )
+
+        sample = all_sample[:,0,32*30:32*32] # reverse process
+        sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        scale = 6
+        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,'reverse process')
+        
+        sample = all_sample[-1] # sample at t = 0
+        sample = th.stack([sample[0,32*0:32*2],sample[0,32*64:32*66],sample[0,32*-2:]])
+        sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        scale = 6
+        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,'t = 0 samples')
+
+        
 
     def forward_backward(self, batch, cond):
         zero_grad(self.model_params)

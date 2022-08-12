@@ -46,7 +46,7 @@ import miditoolkit
 from utils import io_util
 
 class PianoRollDataset(Dataset):
-    def __init__(self, data_dir, segment_len = 0, max_duration = 32*50):
+    def __init__(self, data_dir, segment_len = 0, max_duration = 32*180):
         print(f'Creating dataset {segment_len}')
         self.pianorolls : list[PianoRoll] = []
         for file_path in glob.glob(os.path.join(data_dir,"*.json")):

@@ -63,16 +63,3 @@ def major2chromatic(x,dim=-1):
     res = torch.gather(x,dim,idx)
     return res
 
-
-from utils.pianoroll import PianoRollDataset
-import matplotlib.pyplot as plt
-d = PianoRollDataset('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll',64)
-print(len(d))
-'''
-s = d[100]
-print(((major2chromatic(chromatic2major(s)) - s)**2).sum())
-plt.imshow(s)
-plt.savefig('a.png')
-plt.imshow(chromatic2major(s))
-plt.savefig('b.png')
-'''

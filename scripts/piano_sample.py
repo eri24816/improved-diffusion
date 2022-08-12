@@ -51,10 +51,14 @@ def main():
         sample_fn = (
             diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
         )
+        shape = (args.batch_size, args.segment_length if args.segment_length !=0 else 180*32, 88)
+        # same noise for the whole batch
+        noise = th.randn(1,*shape[1:],device=dist_util.dev()).expand(shape)
         sample = sample_fn(
             model,
-            (args.batch_size, args.segment_length, 88),
+            shape,
             clip_denoised=args.clip_denoised,
+            #noise = noise,
             model_kwargs=model_kwargs,
         )
         for s in sample:
@@ -62,7 +66,7 @@ def main():
             path = os.path.join(logger.get_dir(),'samples/',os.path.basename(args.model_path).rsplit( ".", 1 )[ 0 ]+'/', f"{i}.mid")
             i+=1
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            PianoRoll.from_tensor((s+1)*64,thres = 5).to_midi(path)
+            PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
         
         '''
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
