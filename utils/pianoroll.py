@@ -1,6 +1,6 @@
 import os
 from torch.utils.data import DataLoader, Dataset
-
+from mpi4py import MPI
 
 def load_data(
     *, data_dir, batch_size, segment_length = 0, deterministic=False
@@ -25,7 +25,9 @@ def load_data(
         raise ValueError("unspecified data directory")
     dataset = PianoRollDataset(
         data_dir,
-        segment_length
+        segment_length,
+        shard=MPI.COMM_WORLD.Get_rank(),
+        num_shards=MPI.COMM_WORLD.Get_size(),
     )
     print(f'Dataset size: {len(dataset)}')
     if deterministic:
@@ -46,11 +48,14 @@ import miditoolkit
 from utils import io_util
 
 class PianoRollDataset(Dataset):
-    def __init__(self, data_dir, segment_len = 0, max_duration = 32*180):
+    def __init__(self, data_dir, segment_len = 0, max_duration = 32*180, shard=0, num_shards=1):
         print(f'Creating dataset {segment_len}')
         self.pianorolls : list[PianoRoll] = []
-        for file_path in glob.glob(os.path.join(data_dir,"*.json")):
+
+        file_list = list(glob.glob(os.path.join(data_dir,"*.json")))[shard:][::num_shards]
+        for file_path in file_list:
             self.pianorolls.append(PianoRoll.load(file_path))
+        
         self.segment_length = segment_len
         if segment_len:
             self.num_segments = [ceil(pianoroll.duration/segment_len) for pianoroll in self.pianorolls]
