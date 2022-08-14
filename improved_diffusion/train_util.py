@@ -22,6 +22,7 @@ from .resample import LossAwareSampler, UniformSampler
 import torchvision
 
 import torch.distributed as dist
+from torch.cuda.amp import autocast, grad_scaler
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -159,8 +160,9 @@ class TrainLoop:
             self.opt.load_state_dict(state_dict)
 
     def _setup_fp16(self):
-        self.master_params = make_master_params(self.model_params)
-        self.model.convert_to_fp16()
+        #self.master_params = make_master_params(self.model_params)
+        #self.model.convert_to_fp16()
+        self.scaler = grad_scaler.GradScaler()
 
     def run_loop(self):
         while (
@@ -284,12 +286,23 @@ class TrainLoop:
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
             if self.use_fp16:
-                loss_scale = 2 ** self.lg_loss_scale
-                (loss * loss_scale).backward()
+                #loss_scale = 2 ** self.lg_loss_scale
+                #(loss * loss_scale).backward()
+                self.scaler.scale(loss).backward()
             else:
                 loss.backward()
 
+        
     def optimize_fp16(self):
+        
+        with autocast():
+            self._log_grad_norm()
+            self._anneal_lr()
+            self.scaler.step(self.opt)
+            self.scaler.update()
+            for rate, params in zip(self.ema_rate, self.ema_params):
+                update_ema(params, self.master_params, rate=rate)
+        '''
         if any(not th.isfinite(p.grad).all() for p in self.model_params):
             self.lg_loss_scale -= 1
             logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
@@ -304,6 +317,7 @@ class TrainLoop:
             update_ema(params, self.master_params, rate=rate)
         master_params_to_model_params(self.model_params, self.master_params)
         self.lg_loss_scale += self.fp16_scale_growth
+        '''
 
     def optimize_normal(self):
         self._log_grad_norm()
@@ -331,7 +345,7 @@ class TrainLoop:
         logger.logkv("step", self.step + self.resume_step)
         logger.logkv("samples", (self.step + self.resume_step + 1) * self.global_batch)
         if self.use_fp16:
-            logger.logkv("lg_loss_scale", self.lg_loss_scale)
+            logger.logkv("lg_loss_scale", self.scaler.get_scale())
 
     def save(self):
         def save_checkpoint(rate, params):
@@ -357,10 +371,12 @@ class TrainLoop:
 
 
     def _master_params_to_state_dict(self, master_params):
+        '''
         if self.use_fp16:
             master_params = unflatten_master_params(
                 self.model.parameters(), master_params
             )
+        '''
         state_dict = self.model.state_dict()
         for i, (name, _value) in enumerate(self.model.named_parameters()):
             assert name in state_dict
