@@ -1,0 +1,25 @@
+#!/bin/bash
+#--------------------------------
+#SBATCH -J test_ddp_2gpus
+#SBATCH --output=/home/eri24816/slurm_gui/data/outputs/1660392987
+#SBATCH -A MST111271
+#SBATCH -p gtest
+#SBATCH --nodes=1
+#SBATCH --nodelist=gn1227
+#SBATCH --time=00:30:00
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task 2
+#SBATCH --chdir /home/eri24816/improved-diffusion
+#--------------------------------
+
+module load cuda/10.0
+module load openmpi/4.1.0
+conda init bash
+. ~/.bashrc
+conda activate music
+
+#cd /home/eri24816/improved-diffusion
+
+. env_2b_tw.sh
+
+srun python scripts/piano_train.py --data_dir /home/eri24816/pianoroll $MODEL_FLAGS $DIFFUSION_FLAGS $TRAIN_FLAGS

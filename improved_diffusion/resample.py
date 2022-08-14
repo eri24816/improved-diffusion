@@ -71,12 +71,10 @@ class LossAwareSampler(ScheduleSampler):
     def update_with_local_losses(self, local_ts, local_losses):
         """
         Update the reweighting using losses from a model.
-
         Call this method from each rank with a batch of timesteps and the
         corresponding losses for each of those timesteps.
         This method will perform synchronization to make sure all of the ranks
         maintain the exact same reweighting.
-
         :param local_ts: an integer Tensor of timesteps.
         :param local_losses: a 1D Tensor of losses.
         """
@@ -84,13 +82,10 @@ class LossAwareSampler(ScheduleSampler):
             th.tensor([0], dtype=th.int32, device=local_ts.device)
             for _ in range(dist.get_world_size())
         ]
-        
         dist.all_gather(
             batch_sizes,
             th.tensor([len(local_ts)], dtype=th.int32, device=local_ts.device),
         )
-
-        batch_sizes = [th.tensor([len(local_ts)], dtype=th.int32, device=local_ts.device)]
 
         # Pad all_gather batches to be the maximum batch size.
         batch_sizes = [x.item() for x in batch_sizes]

@@ -189,6 +189,19 @@ class TensorBoardOutputFormat(KVWriter):
             self.writer.Close()
             self.writer = None
 
+class TBOutputFormat(KVWriter):
+    def __init__(self, filename):
+        
+        self.writer = SummaryWriter(log_dir=filename)
+
+    def writekvs(self, kvs):
+        self.step = int(kvs['step'])
+        for k,v in kvs.items():
+            self.writer.add_scalar(k,v,self.step)
+
+    def close(self):
+        pass
+
 
 def make_output_format(format, ev_dir, log_suffix=""):
     os.makedirs(ev_dir, exist_ok=True)
@@ -202,6 +215,9 @@ def make_output_format(format, ev_dir, log_suffix=""):
         return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
+    elif format == "tb":
+        date = datetime.datetime.now().strftime("%m_%d_%Y/%H_%M_%S")
+        return TBOutputFormat(osp.join('runs/', f"{date}_{log_suffix}"))
     else:
         raise ValueError("Unknown format specified: %s" % (format,))
 
@@ -350,9 +366,6 @@ class Logger(object):
         self.dir = dir
         self.output_formats = output_formats
         self.comm = comm
-
-        log_dir = datetime.datetime.now().strftime("%m_%d_%Y/%H_%M_%S")
-        self.writer = SummaryWriter(log_dir=os.path.join('runs/',log_dir))
         self.step = 0
 
     # Logging API, forwarded
@@ -385,15 +398,13 @@ class Logger(object):
         self.name2val.clear()
         self.name2cnt.clear()
 
-        self.step = int(out['step'])
-        for k,v in out.items():
-            self.writer.add_scalar(k,v,self.step)
-
         return out
 
     def write_img(self,img,tag='0'):
-        img = img.clamp(0,1)
-        self.writer.add_images(tag,img,self.step)
+        for format in self.output_formats:
+            if isinstance(format,TBOutputFormat):
+                img = img.clamp(0,1)
+                format.writer.add_images(tag,img,self.step)
         '''
         import matplotlib.pyplot as plt
         plt.imshow(img[0,0].cpu(),cmap='Greys_r')
@@ -489,7 +500,7 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
 
     if format_strs is None:
         if rank == 0:
-            format_strs = os.getenv("OPENAI_LOG_FORMAT", "stdout,log,csv").split(",")
+            format_strs = os.getenv("OPENAI_LOG_FORMAT", "stdout,log,csv,tb").split(",")
         else:
             format_strs = os.getenv("OPENAI_LOG_FORMAT_MPI", "log").split(",")
     format_strs = filter(None, format_strs)
