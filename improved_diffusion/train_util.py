@@ -123,14 +123,14 @@ class TrainLoop:
 
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
-            if dist.get_rank() == 0:
+            if True:#dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 self.model.load_state_dict(
                     dist_util.load_state_dict(
                         resume_checkpoint, map_location=dist_util.dev()
                     )
                 )
-
+        dist_util.sync_params(self.model.parameters())
 
     def _load_ema_parameters(self, rate):
         ema_params = copy.deepcopy(self.master_params)
@@ -138,13 +138,14 @@ class TrainLoop:
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
+            if True:#dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
                     ema_checkpoint, map_location=dist_util.dev()
                 )
                 ema_params = self._state_dict_to_master_params(state_dict)
 
-        #dist_util.sync_params(ema_params)
+        dist_util.sync_params(ema_params)
         return ema_params
 
     def _load_optimizer_state(self):
@@ -174,11 +175,14 @@ class TrainLoop:
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % (self.save_interval//6) == 0:
-                print('Sampling...')
-                self.run_sample()
-                #logger.write_img((batch[0:1,32*32:34*32].transpose(1,2).unsqueeze(1)+1)/2,'training data')
-                logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
-                #self.run_sample_song()
+                if dist.get_rank()==0:
+                    print('Sampling...')
+                    if self.segment_length !=0:
+                        self.run_sample()
+                        logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
+                    else:
+                        self.run_sample_song()
+                        logger.write_img((batch[0:1,32*32:34*32].transpose(1,2).unsqueeze(1)+1)/2,'training data')
 
             if self.step % self.save_interval == 0:
                 self.save()
@@ -211,16 +215,15 @@ class TrainLoop:
         sample = sample.unsqueeze(1)
         sample = sample.permute(0, 1, 3, 2)
         sample = sample.contiguous()
-        scale = 6
-        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        horiz_scale, vertical_scale = 4, 8
+        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
         logger.write_img((sample+1)/2,'reverse process')
 
         sample = all_sample[-1] # sample at t = 0
         sample = sample.unsqueeze(1)
         sample = sample.permute(0, 1, 3, 2)
         sample = sample.contiguous()
-        scale = 6
-        sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
         logger.write_img((sample+1)/2,'t = 0 samples')
 
         
@@ -368,7 +371,7 @@ class TrainLoop:
                 "wb",
             ) as f:
                 th.save(self.opt.state_dict(), f)
-
+        dist.barrier()
 
     def _master_params_to_state_dict(self, master_params):
         '''

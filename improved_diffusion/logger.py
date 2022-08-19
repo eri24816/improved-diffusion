@@ -191,13 +191,17 @@ class TensorBoardOutputFormat(KVWriter):
 
 class TBOutputFormat(KVWriter):
     def __init__(self, filename):
-        
+        self.step = 0
         self.writer = SummaryWriter(log_dir=filename)
 
     def writekvs(self, kvs):
         self.step = int(kvs['step'])
         for k,v in kvs.items():
             self.writer.add_scalar(k,v,self.step)
+
+    def write_image(self,img,tag='0'):
+        img = img.clamp(0,1)
+        self.writer.add_images(tag,img,self.step)
 
     def close(self):
         pass
@@ -216,8 +220,8 @@ def make_output_format(format, ev_dir, log_suffix=""):
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     elif format == "tb":
-        date = datetime.datetime.now().strftime("%m_%d_%Y/%H_%M_%S")
-        return TBOutputFormat(osp.join('runs/', f"{date}_{log_suffix}"))
+        date = datetime.datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
+        return TBOutputFormat(osp.join(ev_dir, 'runs', f"{date}"))
     else:
         raise ValueError("Unknown format specified: %s" % (format,))
 
@@ -259,7 +263,6 @@ def dumpkvs():
 
 def write_img(img,tag='0'):
     """
-    Write all of the diagnostics from the current iteration
     """
     return get_current().write_img(img,tag)
 
@@ -366,7 +369,6 @@ class Logger(object):
         self.dir = dir
         self.output_formats = output_formats
         self.comm = comm
-        self.step = 0
 
     # Logging API, forwarded
     # ----------------------------------------
@@ -404,7 +406,7 @@ class Logger(object):
         for format in self.output_formats:
             if isinstance(format,TBOutputFormat):
                 img = img.clamp(0,1)
-                format.writer.add_images(tag,img,self.step)
+                format.write_image(img,tag)
         '''
         import matplotlib.pyplot as plt
         plt.imshow(img[0,0].cpu(),cmap='Greys_r')

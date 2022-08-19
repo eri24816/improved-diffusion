@@ -283,8 +283,8 @@ class FFTransformer(nn.Module):
                 nn.Linear(d,88)
             )
 
-        print(self)
-        print(f'param count: {sum(p.numel() for p in self.parameters() if p.requires_grad)/1_000_000}M')
+        #print(self)
+        #print(f'param count: {sum(p.numel() for p in self.parameters() if p.requires_grad)/1_000_000}M')
             
     
     def forward(self,x,t):
@@ -419,8 +419,8 @@ class TransformerUnet(nn.Module):
                 nn.Linear(d1,88)
             )
 
-        print(self)
-        print(f'param count: {sum(p.numel() for p in self.parameters() if p.requires_grad)/1_000_000}M')
+        #print(self)
+        #print(f'param count: {sum(p.numel() for p in self.parameters() if p.requires_grad)/1_000_000}M')
             
     
     def forward(self,x,t):
