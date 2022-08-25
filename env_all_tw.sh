@@ -10,4 +10,4 @@ export OPENAI_LOGDIR=~/improved-diffusion/log/all_tw
 
 export MODEL_FLAGS="--num_channels 128 --learn_sigma True --segment_length 0"
 export DIFFUSION_FLAGS="--diffusion_steps 1000 --noise_schedule cosine"
-export TRAIN_FLAGS="--lr 2e-05 --batch_size 4 --schedule_sampler loss-second-moment --save_interval 50000 --log_interval 200"
+export TRAIN_FLAGS="--lr 2e-05 --batch_size 4 --schedule_sampler loss-second-moment --save_interval 50000 --log_interval 200" 

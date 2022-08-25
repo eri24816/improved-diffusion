@@ -53,7 +53,7 @@ def main():
         )
         shape = (args.batch_size, args.segment_length if args.segment_length !=0 else 180*32, 88)
         # same noise for the whole batch
-        noise = th.randn(1,*shape[1:],device=dist_util.dev()).expand(shape)
+        # noise = th.randn(1,*shape[1:],device=dist_util.dev()).expand(shape)
         sample = sample_fn(
             model,
             shape,

@@ -481,7 +481,7 @@ def mpi_weighted_mean(comm, local_name2valcount):
         return {}
 
 
-def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
+def configure(dir=None, format_strs=None, comm=None, log_suffix="", tb = False):
     """
     If comm is provided, average all numerical stats across that comm
     """
@@ -502,7 +502,10 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
 
     if format_strs is None:
         if rank == 0:
-            format_strs = os.getenv("OPENAI_LOG_FORMAT", "stdout,log,csv,tb").split(",")
+            if tb:
+                format_strs = os.getenv("OPENAI_LOG_FORMAT", "stdout,log,csv,tb").split(",")
+            else:
+                format_strs = os.getenv("OPENAI_LOG_FORMAT", "stdout,log,csv").split(",")
         else:
             format_strs = os.getenv("OPENAI_LOG_FORMAT_MPI", "log").split(",")
     format_strs = filter(None, format_strs)

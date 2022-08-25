@@ -19,8 +19,8 @@ from improved_diffusion.train_util import TrainLoop
 def main():
     args = create_argparser().parse_args()
 
-    #dist_util.setup_dist()
-    logger.configure()
+    dist_util.setup_dist()
+    logger.configure(tb=True)
 
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
