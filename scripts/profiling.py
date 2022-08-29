@@ -1,7 +1,7 @@
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
-from improved_diffusion.transformer_unet import TransformerUnet
+from improved_diffusion.models.transformer_unet import TransformerUnet
 from utils.pianoroll import PianoRollDataset
 
 model = TransformerUnet(256,n_blocks=2, learn_sigma= False).cuda()

@@ -3,9 +3,10 @@ import inspect
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import SuperResModel, UNetModel
-from .unet2 import UNet2
-from .transformer_unet import TransformerUnet, PitchAwareTransformerUnet, FFTransformer
+from .models.transformer_unet import TransformerUnet, PitchAwareTransformerUnet, FFTransformer
+from .models.encoder import Encoder
+
+import torch
 
 NUM_CLASSES = 1000
 
@@ -136,7 +137,10 @@ def create_model(
         is_attn=[False, False, False, True],
     )'''
     #return FFTransformer(512,learn_sigma= learn_sigma)
-    return TransformerUnet(256,512,512,2,2,learn_sigma= learn_sigma)
+    #return TransformerUnet(256,512,512,2,2,learn_sigma= learn_sigma)
+    encoder = Encoder(512,out_d=16)
+    eps_model = FFTransformer(512,learn_sigma= learn_sigma,d_cond=16)
+    return torch.nn.ModuleDict({'encoder':encoder,'eps_model':eps_model})
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()

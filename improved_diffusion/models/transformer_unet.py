@@ -1,20 +1,10 @@
-from turtle import forward
-from regex import D
+from typing import Optional
 import torch
 import torch.nn as nn
 import numpy as np
 from utils import music
 
-Nonlinearity = nn.SiLU
-
-def initialize_weight(x):
-    nn.init.xavier_uniform_(x.weight)
-    if x.bias is not None:
-        nn.init.constant_(x.bias, 0)
-
-class SkipConnection(nn.Sequential):
-    def forward(self, input):
-        return input + super().forward(input)
+from .nn_utils import Nonlinearity, SkipConnection, initialize_weight
 
 class Sequential(nn.Sequential):
     """ Class to combine multiple models. Sequential allowing multiple inputs."""
@@ -238,7 +228,7 @@ class PitchAwareTransformerUnet(nn.Module):
         return out
 
 class FFTransformer(nn.Module):
-    def __init__(self,d,n_blocks = 4, n_heads = 8, learn_sigma = False) -> None:
+    def __init__(self,d,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False) -> None:
         super().__init__()
         self.learn_sigma=learn_sigma
         # time embbeding
@@ -255,21 +245,12 @@ class FFTransformer(nn.Module):
 
         # build model blocks
         self.in_block = nn.Sequential(# [B,L,P,D]
-            nn.Linear(88+self.d_time_emb+self.d_pos_emb,d),
+            nn.Linear(88+self.d_time_emb+self.d_pos_emb+d_cond,d),
             SkipConnection(
                 Nonlinearity(),
                 nn.Linear(d,d),
             )
         )
-
-        '''
-        self.down1 = nn.Sequential(
-            *[TransformerBlock(d, n_heads) for i in range(n_blocks)]
-        )
-        self.up1 = nn.Sequential(
-            *[TransformerBlock(d, n_heads) for i in range(n_blocks)]
-        )
-        '''
 
         encoder_layer = nn.TransformerEncoderLayer(d_model=d, nhead=n_heads,batch_first=True)
         self.transformer = nn.TransformerEncoder(encoder_layer,num_layers=n_blocks)
@@ -287,7 +268,7 @@ class FFTransformer(nn.Module):
         #print(f'param count: {sum(p.numel() for p in self.parameters() if p.requires_grad)/1_000_000}M')
             
     
-    def forward(self,x,t):
+    def forward(self,x,t,condition:Optional[torch.Tensor] = None):
         # x : [b, l=n_bar*32, p=88]
         # t : [b]
         B = x.shape[0]
@@ -299,18 +280,17 @@ class FFTransformer(nn.Module):
         pos_emb = self.pos_emb[:L] # [L, 43]
         pos_emb = pos_emb.view(1,L,-1).expand(B,L,-1) # [B, L, 43]
 
-        x = torch.cat([x,t_emb,pos_emb],dim = -1) # [B, L, D]
+        if condition != None:
+            condition = condition.unsqueeze(1).expand(B,L,-1)
+            x = torch.cat([x,t_emb,pos_emb,condition],dim = -1) # [B, L, D]
+        else:
+            x = torch.cat([x,t_emb,pos_emb],dim = -1) # [B, L, D]
 
         x = self.in_block(x)
 
-        '''
-        x = self.down1(x) # [B, L, D]
-        x = self.up1(x) # [B, L, D]
-        '''
         x = self.transformer(x)
 
         mu = self.out_block(x)
-        #out = mu
         
         if self.learn_sigma:
             sigma = self.out_sigma_block(x)

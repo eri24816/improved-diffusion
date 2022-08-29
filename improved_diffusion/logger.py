@@ -191,6 +191,7 @@ class TensorBoardOutputFormat(KVWriter):
 
 class TBOutputFormat(KVWriter):
     def __init__(self, filename):
+        print(f'log tb to {filename}')
         self.step = 0
         self.writer = SummaryWriter(log_dir=filename)
 

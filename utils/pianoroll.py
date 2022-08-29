@@ -1,4 +1,5 @@
 import os
+import random
 from torch.utils.data import DataLoader, Dataset
 from mpi4py import MPI
 
@@ -181,6 +182,10 @@ class PianoRoll:
         if normalized:
             piano_roll = piano_roll/64-1
         return piano_roll
+
+    def get_random_tensor_clip(self,duration,normalized = False):
+        start_time = random.randint(0,(self.duration-duration)//32)*32
+        return self.to_tensor(start_time, start_time+duration, normalized = normalized)
 
     def save(self,path):
         io_util.json_dump({"onset_events":self.notes,"pedal_events":self.pedal},path)

@@ -8,6 +8,8 @@ import torch as th
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 
+from improved_diffusion.models.encoder import CyclicalKlWeight, Encoder
+
 from . import dist_util, logger
 from .fp16_util import (
     make_master_params,
@@ -50,8 +52,13 @@ class TrainLoop:
         weight_decay=0.0,
         lr_anneal_steps=0,
         segment_length=0,
+        kl_weight=1.0,
     ):
         self.model = model
+        self.use_encoder = 'encoder' in self.model
+        if self.use_encoder:
+            self.encoder : Encoder = model['encoder']
+        self.eps_model = model['eps_model']
         self.diffusion = diffusion
         self.data = data
         self.batch_size = batch_size
@@ -81,6 +88,7 @@ class TrainLoop:
         self.sync_cuda = th.cuda.is_available()
 
         self.segment_length = segment_length
+        self.kl_weight = CyclicalKlWeight(kl_weight,2e4)
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -205,10 +213,16 @@ class TrainLoop:
         self.log_step()
 
     def run_sample(self):
+        # 1-2 bars model sampling
+        model_kwargs = {}
+        if self.encoder:
+            latent = th.randn(5, 16).to(dist_util.dev())
+            model_kwargs['condition'] = latent
         all_sample = self.diffusion.p_sample_loop_collect(
-            self.model,
+            self.eps_model,
             (5, self.segment_length, 88),
-            num_imgs = 5
+            num_imgs = 5,
+            model_kwargs = model_kwargs,
         )
 
         sample = all_sample[:,0] # reverse process
@@ -229,10 +243,16 @@ class TrainLoop:
         
 
     def run_sample_song(self):
+        # full song model sampling
+        model_kwargs = {}
+        if self.encoder:
+            latent = th.randn(5, 16).to(dist_util.dev())
+            model_kwargs['condition'] = latent
         all_sample = self.diffusion.p_sample_loop_collect(
-            self.model,
-            (1, 32*180, 88),
-            num_imgs = 5
+            self.eps_model,
+            (5, 32*180, 88),
+            num_imgs = 5,
+            model_kwargs = model_kwargs,
         )
 
         sample = all_sample[:,0,32*30:32*32] # reverse process
@@ -264,10 +284,16 @@ class TrainLoop:
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            
+            if self.use_encoder:
+                latent, kl_loss = self.encoder(micro,return_kl=True)
+                latent = th.nn.Identity()(latent) # copy the backward node to bypass kl gradients, for debugging purpose.
+                latent.retain_grad()
+                micro_cond['condition'] = latent
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
-                self.ddp_model,
+                self.ddp_model.module['eps_model'],
                 micro,
                 t,
                 model_kwargs=micro_cond,
@@ -279,21 +305,29 @@ class TrainLoop:
                 with self.ddp_model.no_sync():
                     losses = compute_losses()
 
+            losses['kl_loss'] = kl_loss
+
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
                     t, losses["loss"].detach()
                 )
 
-            loss = (losses["loss"] * weights).mean()
-            log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}
-            )
+            loss = ((losses["loss"] + losses['kl_loss'] * self.kl_weight.get(self.step)) * weights).mean()
+            
             if self.use_fp16:
                 #loss_scale = 2 ** self.lg_loss_scale
                 #(loss * loss_scale).backward()
                 self.scaler.scale(loss).backward()
             else:
                 loss.backward()
+            
+            if self.use_encoder:
+                losses['latent_grad'] = th.norm(latent.grad).item()
+            
+            log_loss_dict(
+                self.diffusion, t, {k: v * weights for k, v in losses.items()}
+            )
+            
 
         
     def optimize_fp16(self):
