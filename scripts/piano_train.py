@@ -54,7 +54,8 @@ def main():
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
         segment_length=args.segment_length,
-        kl_weight=args.kl_weight
+        kl_weight=args.kl_weight,
+        latent_size=args.latent_size,
     ).run_loop()
 
 
@@ -75,6 +76,7 @@ def create_argparser():
         fp16_scale_growth=1e-3,
         segment_length = 0,
         kl_weight=1.0,
+        latent_size=64,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

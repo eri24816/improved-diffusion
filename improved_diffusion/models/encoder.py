@@ -43,7 +43,7 @@ class Encoder(nn.Module):
             nn.Flatten(1)       # [B,out_d*2]
         )
 
-    def forward(self,x,sample=True,return_kl=False):
+    def forward(self,x,sample=False,return_kl=False):
         # x : [b, l=n_bar*32, p=88]
         # t : [b]
         B = x.shape[0]
@@ -64,7 +64,7 @@ class Encoder(nn.Module):
         else:
             x = mean
         if return_kl:
-            return x, kl_divergence(mean,logvar)
+            return x, kl_divergence(mean,logvar) if sample else 0
         else:
             return x
 

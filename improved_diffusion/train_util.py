@@ -53,6 +53,7 @@ class TrainLoop:
         lr_anneal_steps=0,
         segment_length=0,
         kl_weight=1.0,
+        latent_size=64,
     ):
         self.model = model
         self.use_encoder = 'encoder' in self.model
@@ -89,6 +90,7 @@ class TrainLoop:
 
         self.segment_length = segment_length
         self.kl_weight = CyclicalKlWeight(kl_weight,2e4)
+        self.latent_size = latent_size
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -178,15 +180,18 @@ class TrainLoop:
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
-            batch= next(self.data)
+            batch = next(self.data)
+            self.model.train()
             self.run_step(batch)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % (self.save_interval//6) == 0:
                 if dist.get_rank()==0:
                     print('Sampling...')
+                    self.model.eval()
                     if self.segment_length !=0:
-                        self.run_sample()
+                        self.run_sample(reconstruct_target=None)
+                        self.run_sample(reconstruct_target=batch.to(dist_util.dev()))
                         logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
                     else:
                         self.run_sample_song()
@@ -212,12 +217,81 @@ class TrainLoop:
             self.optimize_normal()
         self.log_step()
 
-    def run_sample(self):
+    def forward_backward(self, batch, cond):
+        zero_grad(self.model_params)
+        for i in range(0, batch.shape[0], self.microbatch):
+            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro_cond = {k: v[i : i + self.microbatch].to(dist_util.dev())for k, v in cond.items()}
+            last_batch = (i + self.microbatch) >= batch.shape[0]
+            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            
+            # Run the encoder.
+            if self.use_encoder:
+                latent, kl_loss = self.encoder(micro,return_kl=True)
+                micro_cond['condition'] = latent
+
+            # Run the model. Get loss.
+            compute_losses = functools.partial(
+                self.diffusion.training_losses,
+                self.eps_model,
+                micro,
+                t,
+                model_kwargs=micro_cond,
+            )
+            if last_batch or not self.use_ddp:
+                losses = compute_losses()
+            else:
+                with self.ddp_model.no_sync():
+                    losses = compute_losses()
+
+            losses['kl_loss'] = kl_loss
+
+            if isinstance(self.schedule_sampler, LossAwareSampler):
+                self.schedule_sampler.update_with_local_losses(
+                    t, losses["loss"].detach()
+                )
+
+            #loss = (losses["loss"] * weights).mean()
+            loss = ((losses["loss"] + losses['kl_loss'] * self.kl_weight.get(self.step)) * weights).mean()
+            
+            # Backprop.
+            if self.use_fp16:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
+            
+            # Log losses.
+            log_loss_dict(
+                self.diffusion, t, {k: v * weights for k, v in losses.items()}
+            )
+
+    def optimize_fp16(self):
+        with autocast():
+            self._log_grad_norm()
+            self._anneal_lr()
+            self.scaler.step(self.opt)
+            self.scaler.update()
+            for rate, params in zip(self.ema_rate, self.ema_params):
+                update_ema(params, self.master_params, rate=rate)
+
+    def optimize_normal(self):
+        self._log_grad_norm()
+        self._anneal_lr()
+        self.opt.step()
+        for rate, params in zip(self.ema_rate, self.ema_params):
+            update_ema(params, self.master_params, rate=rate)
+
+    
+    def run_sample(self, reconstruct_target = None):
         # 1-2 bars model sampling
         model_kwargs = {}
         if self.encoder:
-            latent = th.randn(5, 16).to(dist_util.dev())
+            if reconstruct_target is not None:
+                latent = self.encoder(reconstruct_target[:5],sample=False)
+            else:
+                latent = th.randn(5, self.latent_size).to(dist_util.dev())
             model_kwargs['condition'] = latent
+
         all_sample = self.diffusion.p_sample_loop_collect(
             self.eps_model,
             (5, self.segment_length, 88),
@@ -225,28 +299,34 @@ class TrainLoop:
             model_kwargs = model_kwargs,
         )
 
-        sample = all_sample[:,0] # reverse process
-        sample = sample.unsqueeze(1)
-        sample = sample.permute(0, 1, 3, 2)
-        sample = sample.contiguous()
-        horiz_scale, vertical_scale = 4, 8
-        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-        logger.write_img((sample+1)/2,'reverse process')
-
-        sample = all_sample[-1] # sample at t = 0
-        sample = sample.unsqueeze(1)
-        sample = sample.permute(0, 1, 3, 2)
-        sample = sample.contiguous()
-        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-        logger.write_img((sample+1)/2,'t = 0 samples')
-
+        prefix = 'reconstruction/' if reconstruct_target is not None else 'generate from scrach/'
         
+        horiz_scale, vertical_scale = 4, 8
+
+        # reverse process
+        sample = all_sample[:,0] 
+        sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,prefix+'reverse process')
+
+        # sample at t = 0
+        sample = all_sample[-1] 
+        if reconstruct_target is not None:
+            sample = th.stack([sample,reconstruct_target[:5],sample],dim=1)
+        else:
+            sample = sample.unsqueeze(1)
+        sample = sample.permute(0, 1, 3, 2)
+        sample = sample.contiguous()
+        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
+        logger.write_img((sample+1)/2,prefix+'t = 0 samples')
 
     def run_sample_song(self):
         # full song model sampling
         model_kwargs = {}
         if self.encoder:
-            latent = th.randn(5, 16).to(dist_util.dev())
+            latent = th.randn(5, self.latent_size).to(dist_util.dev())
             model_kwargs['condition'] = latent
         all_sample = self.diffusion.p_sample_loop_collect(
             self.eps_model,
@@ -272,96 +352,6 @@ class TrainLoop:
         sample = torchvision.transforms.Resize((scale*sample.shape[-2],scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
         logger.write_img((sample+1)/2,'t = 0 samples')
 
-        
-
-    def forward_backward(self, batch, cond):
-        zero_grad(self.model_params)
-        for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
-            micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
-                for k, v in cond.items()
-            }
-            last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
-            
-            if self.use_encoder:
-                latent, kl_loss = self.encoder(micro,return_kl=True)
-                latent = th.nn.Identity()(latent) # copy the backward node to bypass kl gradients, for debugging purpose.
-                latent.retain_grad()
-                micro_cond['condition'] = latent
-
-            compute_losses = functools.partial(
-                self.diffusion.training_losses,
-                self.ddp_model.module['eps_model'],
-                micro,
-                t,
-                model_kwargs=micro_cond,
-            )
-
-            if last_batch or not self.use_ddp:
-                losses = compute_losses()
-            else:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
-
-            losses['kl_loss'] = kl_loss
-
-            if isinstance(self.schedule_sampler, LossAwareSampler):
-                self.schedule_sampler.update_with_local_losses(
-                    t, losses["loss"].detach()
-                )
-
-            loss = ((losses["loss"] + losses['kl_loss'] * self.kl_weight.get(self.step)) * weights).mean()
-            
-            if self.use_fp16:
-                #loss_scale = 2 ** self.lg_loss_scale
-                #(loss * loss_scale).backward()
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
-            
-            if self.use_encoder:
-                losses['latent_grad'] = th.norm(latent.grad).item()
-            
-            log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}
-            )
-            
-
-        
-    def optimize_fp16(self):
-        
-        with autocast():
-            self._log_grad_norm()
-            self._anneal_lr()
-            self.scaler.step(self.opt)
-            self.scaler.update()
-            for rate, params in zip(self.ema_rate, self.ema_params):
-                update_ema(params, self.master_params, rate=rate)
-        '''
-        if any(not th.isfinite(p.grad).all() for p in self.model_params):
-            self.lg_loss_scale -= 1
-            logger.log(f"Found NaN, decreased lg_loss_scale to {self.lg_loss_scale}")
-            return
-
-        model_grads_to_master_grads(self.model_params, self.master_params)
-        self.master_params[0].grad.mul_(1.0 / (2 ** self.lg_loss_scale))
-        self._log_grad_norm()
-        self._anneal_lr()
-        self.opt.step()
-        for rate, params in zip(self.ema_rate, self.ema_params):
-            update_ema(params, self.master_params, rate=rate)
-        master_params_to_model_params(self.model_params, self.master_params)
-        self.lg_loss_scale += self.fp16_scale_growth
-        '''
-
-    def optimize_normal(self):
-        self._log_grad_norm()
-        self._anneal_lr()
-        self.opt.step()
-        for rate, params in zip(self.ema_rate, self.ema_params):
-            update_ema(params, self.master_params, rate=rate)
 
     def _log_grad_norm(self):
         sqsum = 0.0

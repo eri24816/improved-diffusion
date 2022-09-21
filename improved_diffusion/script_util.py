@@ -35,6 +35,7 @@ def model_and_diffusion_defaults():
         rescale_learned_sigmas=True,
         use_checkpoint=False,
         use_scale_shift_norm=True,
+        latent_size=0,
     )
 
 
@@ -58,6 +59,7 @@ def create_model_and_diffusion(
     rescale_learned_sigmas,
     use_checkpoint,
     use_scale_shift_norm,
+    latent_size=0,
 ):
     model = create_model(
         image_size,
@@ -71,6 +73,7 @@ def create_model_and_diffusion(
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
         dropout=dropout,
+        latent_size=latent_size,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -98,6 +101,7 @@ def create_model(
     num_heads_upsample,
     use_scale_shift_norm,
     dropout,
+    latent_size=0,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -138,8 +142,9 @@ def create_model(
     )'''
     #return FFTransformer(512,learn_sigma= learn_sigma)
     #return TransformerUnet(256,512,512,2,2,learn_sigma= learn_sigma)
-    encoder = Encoder(512,out_d=16)
-    eps_model = FFTransformer(512,learn_sigma= learn_sigma,d_cond=16)
+    encoder = Encoder(512,out_d=latent_size)
+    print('latent_size',latent_size)
+    eps_model = FFTransformer(512,learn_sigma= learn_sigma,d_cond=latent_size)
     return torch.nn.ModuleDict({'encoder':encoder,'eps_model':eps_model})
 
 def sr_model_and_diffusion_defaults():
