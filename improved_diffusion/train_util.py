@@ -56,8 +56,9 @@ class TrainLoop:
         latent_size=64,
     ):
         self.model = model
-        self.use_encoder = 'encoder' in self.model
+        self.use_encoder = latent_size != 0
         if self.use_encoder:
+            assert'encoder' in self.model
             self.encoder : Encoder = model['encoder']
         self.eps_model = model['eps_model']
         self.diffusion = diffusion

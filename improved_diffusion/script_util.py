@@ -142,10 +142,16 @@ def create_model(
     )'''
     #return FFTransformer(512,learn_sigma= learn_sigma)
     #return TransformerUnet(256,512,512,2,2,learn_sigma= learn_sigma)
-    encoder = Encoder(512,out_d=latent_size)
-    print('latent_size',latent_size)
-    eps_model = FFTransformer(512,learn_sigma= learn_sigma,d_cond=latent_size)
-    return torch.nn.ModuleDict({'encoder':encoder,'eps_model':eps_model})
+
+    models = {}
+
+    if latent_size != 0:
+        models['encoder'] = Encoder(512,out_d=latent_size)
+        print('latent_size',latent_size)
+
+    models['eps_model'] = FFTransformer(512,learn_sigma= learn_sigma,d_cond=latent_size)
+
+    return torch.nn.ModuleDict(models)
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()

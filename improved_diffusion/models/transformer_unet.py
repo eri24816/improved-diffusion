@@ -230,7 +230,7 @@ class PitchAwareTransformerUnet(nn.Module):
 class FFTransformer(nn.Module):
     def __init__(self,d,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False) -> None:
         super().__init__()
-        self.learn_sigma=learn_sigma
+        
         # time embbeding
         self.d_time_emb = 16
         self.time_emb = nn.Sequential(nn.Linear(1, self.d_time_emb),Nonlinearity())
@@ -259,6 +259,7 @@ class FFTransformer(nn.Module):
             nn.Linear(d,88)
         )
 
+        self.learn_sigma=learn_sigma
         if learn_sigma:
             self.out_sigma_block = nn.Sequential(# [B,L,P,D]
                 nn.Linear(d,88)
