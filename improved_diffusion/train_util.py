@@ -1,6 +1,7 @@
 import copy
 import functools
 import os
+from turtle import xcor
 
 import blobfile as bf
 import numpy as np
@@ -9,6 +10,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 
 from improved_diffusion.models.encoder import CyclicalKlWeight, Encoder
+from improved_diffusion.resample import create_named_schedule_sampler
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -36,10 +38,9 @@ class TrainLoop:
     def __init__(
         self,
         *,
-        model,
-        diffusion,
-        data,
-        batch_size,
+        config,model,diffusion,data,
+
+        global_batch_size,
         microbatch,
         lr,
         ema_rate,
@@ -51,20 +52,17 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
-        segment_length=0,
-        kl_weight=1.0,
-        latent_size=64,
     ):
+        self.config = config
         self.model = model
-        self.use_encoder = latent_size != 0
+        self.use_encoder = config['latent']['latent_size'] != 0
         if self.use_encoder:
-            assert'encoder' in self.model
             self.encoder : Encoder = model['encoder']
         self.eps_model = model['eps_model']
         self.diffusion = diffusion
         self.data = data
-        self.batch_size = batch_size
-        self.microbatch = microbatch if microbatch > 0 else batch_size
+        self.batch_size = global_batch_size//dist.get_world_size()
+        self.microbatch = microbatch if microbatch > 0 else self.batch_size
         self.lr = lr
         self.ema_rate = (
             [ema_rate]
@@ -76,22 +74,23 @@ class TrainLoop:
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
-        self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+        self.schedule_sampler =  create_named_schedule_sampler(schedule_sampler, diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
 
         self.step = 0
         self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+        self.global_batch = global_batch_size 
 
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
         self.sync_cuda = th.cuda.is_available()
 
-        self.segment_length = segment_length
-        self.kl_weight = CyclicalKlWeight(kl_weight,2e4)
-        self.latent_size = latent_size
+        self.kl_weight = CyclicalKlWeight(config['latent']['kl_weight'],int(2e4))
+        self.len_dec = config['decoder']['len_dec']
+        self.len_enc = config['encoder']['len_enc']
+        self.latent_size = config['latent']['latent_size']
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -190,7 +189,7 @@ class TrainLoop:
                 if dist.get_rank()==0:
                     print('Sampling...')
                     self.model.eval()
-                    if self.segment_length !=0:
+                    if self.len_dec !=0:
                         self.run_sample(reconstruct_target=None)
                         self.run_sample(reconstruct_target=batch.to(dist_util.dev()))
                         logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
@@ -228,7 +227,13 @@ class TrainLoop:
             
             # Run the encoder.
             if self.use_encoder:
-                latent, kl_loss = self.encoder(micro,return_kl=True)
+                logger.debug(f"encoder input shape: {micro.shape}")
+                latent, kl_loss = self.encoder(micro,return_kl=True) # [B, L, D]
+                logger.debug(f"encoder output shape: {latent.shape}")
+                # expand the latent to fit the decoder
+                expand_ratio = 32 * self.len_enc
+                latent = latent.repeat_interleave(expand_ratio, 1)
+                logger.debug(f"encoder output shape after expansion: {latent.shape}")
                 micro_cond['condition'] = latent
 
             # Run the model. Get loss.
@@ -285,43 +290,49 @@ class TrainLoop:
     
     def run_sample(self, reconstruct_target = None):
         # 1-2 bars model sampling
+        num_samples = max(6//self.len_dec,1)
         model_kwargs = {}
         if self.encoder:
             if reconstruct_target is not None:
-                latent = self.encoder(reconstruct_target[:5],sample=False)
+                latent = self.encoder(reconstruct_target[:num_samples],sample=False)
             else:
-                latent = th.randn(5, self.latent_size).to(dist_util.dev())
+                latent = th.randn(num_samples,self.len_dec//self.len_enc, self.latent_size,device=dist_util.dev())
+            expand_ratio = 32 * self.len_enc
+            latent = latent.repeat_interleave(expand_ratio, 1)
             model_kwargs['condition'] = latent
 
         all_sample = self.diffusion.p_sample_loop_collect(
             self.eps_model,
-            (5, self.segment_length, 88),
-            num_imgs = 5,
+            (num_samples, self.len_dec*32, 88),
+            num_imgs = num_samples,
             model_kwargs = model_kwargs,
         )
 
         prefix = 'reconstruction/' if reconstruct_target is not None else 'generate from scrach/'
         
-        horiz_scale, vertical_scale = 4, 8
+        def to_img(x):
+            logger.log(f"sample shape: {x.shape}")
+            horiz_scale, vertical_scale = 4, 8
+            x = x.permute(0, 1, 3, 2).contiguous()
+            x = torchvision.transforms.Resize((horiz_scale*x.shape[-2],vertical_scale*x.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(x)
+            x = (x+1)/2
+            logger.log(f"sample shape after resize: {x.shape}")
+            return x
 
         # reverse process
         sample = all_sample[:,0] 
         sample = sample.unsqueeze(1)
-        sample = sample.permute(0, 1, 3, 2)
-        sample = sample.contiguous()
-        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-        logger.write_img((sample+1)/2,prefix+'reverse process')
+        
+        logger.write_img(to_img(sample),prefix+'reverse process')
 
         # sample at t = 0
         sample = all_sample[-1] 
         if reconstruct_target is not None:
-            sample = th.stack([sample,reconstruct_target[:5],sample],dim=1)
-        else:
-            sample = sample.unsqueeze(1)
-        sample = sample.permute(0, 1, 3, 2)
-        sample = sample.contiguous()
-        sample = torchvision.transforms.Resize((horiz_scale*sample.shape[-2],vertical_scale*sample.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(sample)
-        logger.write_img((sample+1)/2,prefix+'t = 0 samples')
+            stacked = th.stack([sample,reconstruct_target[:num_samples],sample],dim=1)
+            logger.write_img(to_img(stacked),prefix+'comparison')
+        
+        sample = sample.unsqueeze(1)
+        logger.write_img(to_img(sample),prefix+'t = 0 samples')
 
     def run_sample_song(self):
         # full song model sampling

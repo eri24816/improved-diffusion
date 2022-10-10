@@ -13,9 +13,10 @@ def kl_divergence(mean,logvar):
     return -0.5 * (logvar - mean.pow(2) - torch.exp(logvar) + 1).sum(1)
 
 class Encoder(nn.Module):
-    def __init__(self,d,n_blocks = 4, n_heads = 8, out_d = 16) -> None:
+    def __init__(self,d,n_blocks = 4, n_heads = 8, out_d = 16,length=32) -> None:
         super().__init__()
         self.out_d = out_d
+        self.length = length
         # positional embedding
         self.d_pos_emb = 11#+32
         pos = np.arange(0,4096)
@@ -43,12 +44,12 @@ class Encoder(nn.Module):
             nn.Flatten(1)       # [B,out_d*2]
         )
 
-    def forward(self,x,sample=False,return_kl=False):
+    def forward(self,x:torch.Tensor,sample=False,return_kl=False):
         # x : [b, l=n_bar*32, p=88]
         # t : [b]
-        B = x.shape[0]
-        L = x.shape[1]
-
+        B_orig,L_orig,_ = x.shape
+        x = x.view(B_orig*L_orig//self.length,self.length,88)
+        B,L,_ = x.shape
         pos_emb = self.pos_emb[:L] # [L, 43]
         pos_emb = pos_emb.view(1,L,-1).expand(B,L,-1) # [B, L, 43]
 
@@ -63,6 +64,7 @@ class Encoder(nn.Module):
             x = gaussian_sample(mean,logvar)
         else:
             x = mean
+        x = x.view(B_orig,L_orig//self.length,self.out_d)
         if return_kl:
             return x, kl_divergence(mean,logvar) if sample else 0
         else:

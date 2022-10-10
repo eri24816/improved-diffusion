@@ -281,8 +281,7 @@ class FFTransformer(nn.Module):
         pos_emb = self.pos_emb[:L] # [L, 43]
         pos_emb = pos_emb.view(1,L,-1).expand(B,L,-1) # [B, L, 43]
 
-        if condition != None:
-            condition = condition.unsqueeze(1).expand(B,L,-1)
+        if condition != None: # [B, L, d_latent]
             x = torch.cat([x,t_emb,pos_emb,condition],dim = -1) # [B, L, D]
         else:
             x = torch.cat([x,t_emb,pos_emb],dim = -1) # [B, L, D]

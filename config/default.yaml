@@ -1,0 +1,47 @@
+data_dir: /home/eri24816/pianoroll
+log_level: INFO
+
+diffusion:
+  diffusion_steps: 1000
+  noise_schedule: cosine
+  timestep_respacing: ""
+  use_kl: False
+  predict_xstart: False
+  rescale_timesteps: True
+  rescale_learned_sigmas: True
+  sigma_small: False
+  use_scale_shift_norm: True
+  learn_sigma: True
+
+encoder:
+  len_enc: 1
+  dim_internal: 512
+  n_blocks: 4
+  n_heads: 8
+  
+latent:
+  kl_weight: 1.0
+  latent_size: 64
+
+decoder:
+  len_dec: 16
+  frame_size: 1 # video diffusion frame
+  dim_internal: 512
+  n_blocks: 4
+  n_heads: 8
+
+training:
+  lr: 1.0e-4
+  weight_decay: 0.0
+  lr_anneal_steps: 0
+  global_batch_size: 128
+  microbatch: -1
+  ema_rate: 0.9999
+  log_interval: 200
+  save_interval: 50000
+  resume_checkpoint: ""
+  use_fp16: False
+  fp16_scale_growth: 1e-3
+  schedule_sampler: loss-second-moment
+
+sampling:
