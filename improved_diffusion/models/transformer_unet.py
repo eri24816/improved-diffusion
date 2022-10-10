@@ -234,7 +234,7 @@ class FFTransformer(nn.Module):
         # time embbeding
         self.d_time_emb = 16
         self.time_emb = nn.Sequential(nn.Linear(1, self.d_time_emb),Nonlinearity())
-
+ 
         # positional embedding
         self.d_pos_emb = 11#+32
         pos = np.arange(0,4096)
@@ -299,6 +299,15 @@ class FFTransformer(nn.Module):
         else:
             out = mu
         
+        return out
+
+    @classmethod
+    def test(cls):
+        instance = cls(16)
+        x = torch.randn(2,32,88)
+        t = torch.randn(2)
+        out = instance(x,t)
+        assert out.shape == x.shape
         return out
 
 class TransformerWithSE(nn.Module):
