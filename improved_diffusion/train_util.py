@@ -2,6 +2,7 @@ import copy
 import functools
 import os
 from turtle import xcor
+from typing import Optional
 
 import blobfile as bf
 import numpy as np
@@ -57,7 +58,10 @@ class TrainLoop:
         self.model = model
         self.use_encoder = config['latent']['latent_size'] != 0
         if self.use_encoder:
-            self.encoder : Encoder = model['encoder']
+            assert 'encoder' in model
+            self.encoder : Optional[Encoder] = model['encoder']
+        else:
+            self.encoder = None
         self.eps_model = model['eps_model']
         self.diffusion = diffusion
         self.data = data
@@ -148,7 +152,7 @@ class TrainLoop:
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
-            if True:#dist.get_rank() == 0:
+            if True:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
                     ema_checkpoint, map_location=dist_util.dev()
@@ -171,8 +175,6 @@ class TrainLoop:
             self.opt.load_state_dict(state_dict)
 
     def _setup_fp16(self):
-        #self.master_params = make_master_params(self.model_params)
-        #self.model.convert_to_fp16()
         self.scaler = grad_scaler.GradScaler()
 
     def run_loop(self):
@@ -191,7 +193,8 @@ class TrainLoop:
                     self.model.eval()
                     if self.len_dec !=0:
                         self.run_sample(reconstruct_target=None)
-                        self.run_sample(reconstruct_target=batch.to(dist_util.dev()))
+                        if self.use_encoder:
+                            self.run_sample(reconstruct_target=batch.to(dist_util.dev()))
                         logger.write_img((batch[0:1].transpose(1,2).unsqueeze(1)+1)/2,'training data')
                     else:
                         self.run_sample_song()
@@ -235,6 +238,8 @@ class TrainLoop:
                 latent = latent.repeat_interleave(expand_ratio, 1)
                 logger.debug(f"encoder output shape after expansion: {latent.shape}")
                 micro_cond['condition'] = latent
+            else:
+                kl_loss = 0
 
             # Run the model. Get loss.
             compute_losses = functools.partial(
@@ -247,7 +252,7 @@ class TrainLoop:
             if last_batch or not self.use_ddp:
                 losses = compute_losses()
             else:
-                with self.ddp_model.no_sync():
+                with self.ddp_model.no_sync():  # type: ignore
                     losses = compute_losses()
 
             losses['kl_loss'] = kl_loss
@@ -311,12 +316,10 @@ class TrainLoop:
         prefix = 'reconstruction/' if reconstruct_target is not None else 'generate from scrach/'
         
         def to_img(x):
-            logger.log(f"sample shape: {x.shape}")
             horiz_scale, vertical_scale = 4, 8
             x = x.permute(0, 1, 3, 2).contiguous()
             x = torchvision.transforms.Resize((horiz_scale*x.shape[-2],vertical_scale*x.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(x)
             x = (x+1)/2
-            logger.log(f"sample shape after resize: {x.shape}")
             return x
 
         # reverse process
@@ -335,6 +338,7 @@ class TrainLoop:
         logger.write_img(to_img(sample),prefix+'t = 0 samples')
 
     def run_sample_song(self):
+        # not maintained for now
         # full song model sampling
         model_kwargs = {}
         if self.encoder:
