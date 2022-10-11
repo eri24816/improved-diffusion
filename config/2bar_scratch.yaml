@@ -1,0 +1,8 @@
+decoder:
+  len_dec: 2 # 2 bars
+
+latent:
+  latent_size: 0 # no latent space. no encoder
+
+training:
+  lr: 2.0e-5

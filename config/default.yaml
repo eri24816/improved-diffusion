@@ -41,7 +41,15 @@ training:
   save_interval: 50000
   resume_checkpoint: ""
   use_fp16: False
-  fp16_scale_growth: 1e-3
+  fp16_scale_growth: 1.0e-3
   schedule_sampler: loss-second-moment
 
 sampling:
+  model_path: ""
+  num_samples: 64
+  use_ddim: False
+  clip_denoised: True
+  batch_size: 32
+  latent_mode: 'all_random'
+  a: "" # source data 1
+  b: "" # source data 2
