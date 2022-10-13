@@ -49,22 +49,24 @@ import miditoolkit
 from utils import io_util
 
 class PianoRollDataset(Dataset):
-    def __init__(self, data_dir, segment_len = 0, max_duration = 32*180, shard=0, num_shards=1):
+    def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1):
         print(f'Creating dataset {segment_len}')
         self.pianorolls : list[PianoRoll] = []
 
-        file_list = list(glob.glob(os.path.join(data_dir,"*.json")))[shard:][::num_shards]
+        file_list = list(glob.glob(os.path.join(data_dir,"*.json")))
         for file_path in file_list:
             self.pianorolls.append(PianoRoll.load(file_path))
         
         self.segment_length = segment_len
         if segment_len:
-            self.num_segments = [ceil(pianoroll.duration/segment_len) for pianoroll in self.pianorolls]
+            num_segments = [ceil(pianoroll.duration/hop_len) for pianoroll in self.pianorolls]
             
             self.segment_id_to_piece = []
-            for pianoroll, num_seg in zip(self.pianorolls, self.num_segments):
-                self.segment_id_to_piece += [(pianoroll,segment_len*i, segment_len*(i+1))for i in range(num_seg)]
-            self.length = sum(self.num_segments)
+            for pianoroll, num_seg in zip(self.pianorolls, num_segments):
+                self.segment_id_to_piece += [(pianoroll,hop_len*i, hop_len*i + segment_len)for i in range(num_seg)]
+            # slice shard
+            self.segment_id_to_piece = self.segment_id_to_piece[shard:][::num_shards]
+            self.length = len(self.segment_id_to_piece)
         else:
             self.length = len(self.pianorolls)
             self.max_duration = min(max_duration,max([pianoroll.duration for pianoroll in self.pianorolls]))
