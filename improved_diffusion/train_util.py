@@ -9,6 +9,7 @@ import numpy as np
 import torch as th
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
+from improved_diffusion.gaussian_diffusion import GaussianDiffusion
 
 from improved_diffusion.models.encoder import CyclicalKlWeight, Encoder
 from improved_diffusion.resample import create_named_schedule_sampler
@@ -39,7 +40,7 @@ class TrainLoop:
     def __init__(
         self,
         *,
-        config,model,diffusion,data,
+        config,model,diffusion : GaussianDiffusion,data,
 
         global_batch_size,
         microbatch,
@@ -295,7 +296,8 @@ class TrainLoop:
     
     def run_sample(self, reconstruct_target = None):
         # 1-2 bars model sampling
-        num_samples = max(6//self.len_dec,1)
+        #num_samples = max(6//self.len_dec,1)
+        num_samples = 5
         model_kwargs = {}
         if self.encoder:
             if reconstruct_target is not None:
@@ -322,20 +324,26 @@ class TrainLoop:
             x = (x+1)/2
             return x
 
+        def merge_nh(x : th.Tensor):
+            n,c,h,w = x.shape
+            x = x.permute(1,0,2,3).contiguous().reshape(c,n*h,w).unsqueeze(0)
+
+            return x
+
         # reverse process
         sample = all_sample[:,0] 
         sample = sample.unsqueeze(1)
         
-        logger.write_img(to_img(sample),prefix+'reverse process')
+        logger.write_img(merge_nh(to_img(sample)),prefix+'reverse process')
 
         # sample at t = 0
         sample = all_sample[-1] 
         if reconstruct_target is not None:
-            stacked = th.stack([sample,reconstruct_target[:num_samples],sample],dim=1)
-            logger.write_img(to_img(stacked),prefix+'comparison')
+            stacked = th.stack([sample,reconstruct_target[:num_samples],sample],dim=1) # stack to compare with target
+            logger.write_img(merge_nh(to_img(sample)),prefix+'comparison')
         
         sample = sample.unsqueeze(1)
-        logger.write_img(to_img(sample),prefix+'t = 0 samples')
+        logger.write_img(merge_nh(to_img(sample)),prefix+'t = 0 samples')
 
     def run_sample_song(self):
         # not maintained for now
