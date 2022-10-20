@@ -123,11 +123,13 @@ class GaussianDiffusion:
         model_var_type,
         loss_type,
         rescale_timesteps=False,
+        use_loss_mask=False,
     ):
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
         self.rescale_timesteps = rescale_timesteps
+        self.use_loss_mask = use_loss_mask
 
         # Use float64 for accuracy.
         betas = np.array(betas, dtype=np.float64)
@@ -674,7 +676,7 @@ class GaussianDiffusion:
                 img = out["sample"]
 
     def _vb_terms_bpd(
-        self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None
+        self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None,loss_mask = None
     ):
         """
         Get a term for the variational lower-bound.
@@ -695,12 +697,16 @@ class GaussianDiffusion:
         kl = normal_kl(
             true_mean, true_log_variance_clipped, out["mean"], out["log_variance"]
         )
+        if loss_mask is not None:
+            kl = kl * loss_mask
         kl = mean_flat(kl) / np.log(2.0)
 
         decoder_nll = -discretized_gaussian_log_likelihood(
             x_start, means=out["mean"], log_scales=0.5 * out["log_variance"]
         )
         assert decoder_nll.shape == x_start.shape
+        if loss_mask is not None:
+            decoder_nll = decoder_nll * loss_mask
         decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
 
         # At the first timestep return the decoder NLL,
@@ -743,14 +749,20 @@ class GaussianDiffusion:
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
 
-            if self.model_var_type in [
-                ModelVarType.LEARNED,
-                ModelVarType.LEARNED_RANGE,
-            ]:
+            if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE,]:
                 B, C = x_t.shape[:2]
                 assert model_output.shape == (B, C * 2, *x_t.shape[2:])
                 model_output, model_var_values = th.split(model_output, C, dim=1)
                 # Learn the variance using the variational bound, but don't let
+
+            if self.use_loss_mask:
+                pred_x_start = {ModelMeanType.START_X: model_output,ModelMeanType.EPSILON: x_start+model_output-noise,}[self.model_mean_type]
+                min_value = x_start.min() # get midi zero. because of normalizing, zero in midi may not be zero in tensor
+                loss_mask = (x_start > min_value) | (pred_x_start > min_value)
+            else:
+                loss_mask = None
+
+            if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE,]:
                 # it affect our mean prediction.
                 frozen_out = th.cat([model_output.detach(), model_var_values], dim=1)
                 terms["vb"] = self._vb_terms_bpd(
@@ -759,6 +771,7 @@ class GaussianDiffusion:
                     x_t=x_t,
                     t=t,
                     clip_denoised=False,
+                    loss_mask = loss_mask,
                 )["output"]
                 if self.loss_type == LossType.RESCALED_MSE:
                     # Divide by 1000 for equivalence with initial implementation.
@@ -773,7 +786,10 @@ class GaussianDiffusion:
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms["mse"] = mean_flat((target - model_output) ** 2)
+            mse = (target - model_output) ** 2
+            if self.use_loss_mask:
+                mse = mse * loss_mask
+            terms["mse"] = mean_flat(mse)
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

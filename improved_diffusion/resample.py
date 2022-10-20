@@ -140,6 +140,7 @@ class LossSecondMomentResampler(LossAwareSampler):
 
     def update_with_all_losses(self, ts, losses):
         for t, loss in zip(ts, losses):
+            loss += 1e-8
             if self._loss_counts[t] == self.history_per_term:
                 # Shift out the oldest loss term.
                 self._loss_history[t, :-1] = self._loss_history[t, 1:]
