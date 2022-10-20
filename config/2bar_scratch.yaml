@@ -6,3 +6,4 @@ latent:
 
 training:
   lr: 2.0e-5
+  resume_checkpoint: "/home/eri24816/improved-diffusion/log/2bar_scratch_newds/model1200000.pt"

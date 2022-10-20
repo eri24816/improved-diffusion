@@ -1,0 +1,21 @@
+# use loss mask
+diffusion:
+  predict_xstart: True
+  use_loss_mask: True
+
+decoder:
+  len_dec: 16
+  frame_size: 1
+  zero: True
+
+latent:
+  latent_size: 0 # no latent space. no encoder
+
+training:
+  lr: 2.0e-5
+#  resume_checkpoint: "log/16bar_scratch/model350000.pt"
+
+sampling:
+  batch_size: 4
+  num_samples: 8
+  model_path: "log/16bar_v_scratch_zero_lm/model150000.pt"

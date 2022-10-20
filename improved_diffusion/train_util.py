@@ -231,13 +231,10 @@ class TrainLoop:
             
             # Run the encoder.
             if self.use_encoder:
-                logger.debug(f"encoder input shape: {micro.shape}")
-                latent, kl_loss = self.encoder(micro,return_kl=True) # [B, L, D]
-                logger.debug(f"encoder output shape: {latent.shape}")
+                latent, kl_loss = self.encoder(micro,return_kl=True) # [B, n_bars, D]
                 # expand the latent to fit the decoder
-                expand_ratio = 32 * self.len_enc
-                latent = latent.repeat_interleave(expand_ratio, 1)
-                logger.debug(f"encoder output shape after expansion: {latent.shape}")
+                expand_ratio = 32 * self.len_enc 
+                latent = latent.repeat_interleave(expand_ratio, 1) # [B, L, D]
                 micro_cond['condition'] = latent
             else:
                 kl_loss = 0
@@ -253,7 +250,7 @@ class TrainLoop:
             if last_batch or not self.use_ddp:
                 losses = compute_losses()
             else:
-                with self.ddp_model.no_sync():  # type: ignore
+                with self.ddp_model.no_sync():  # type: ignore #? Why no sync?
                     losses = compute_losses()
 
             losses['kl_loss'] = kl_loss
@@ -321,7 +318,7 @@ class TrainLoop:
             horiz_scale, vertical_scale = 4, 8
             x = x.permute(0, 1, 3, 2).contiguous()
             x = torchvision.transforms.Resize((horiz_scale*x.shape[-2],vertical_scale*x.shape[-1]),torchvision.transforms.InterpolationMode.NEAREST)(x)
-            x = (x+1)/2
+            x = ((x+1)/2).clamp(0,1)
             return x
 
         def merge_nh(x : th.Tensor):

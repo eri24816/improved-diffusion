@@ -12,12 +12,19 @@ from improved_diffusion.train_util import TrainLoop
 
 
 def main():
-    config = get_config() # read config yaml at --config
+    config, config_override = get_config() # read config yaml at --config
     
     dist_util.setup_dist()
     logger.configure(tb=True)
 
     logger.set_level({"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "DISABLE": 50}[config["log_level"]])
+
+    logger.log("")
+    logger.log('-'*30)
+    logger.log('Config:')
+    logger.log(yaml.dump(config_override))
+    logger.log('-'*30)
+    logger.log("")
 
     logger.log("creating model and diffusion...")
     model = create_model(config)

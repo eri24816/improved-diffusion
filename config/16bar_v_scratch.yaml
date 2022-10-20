@@ -1,5 +1,10 @@
+diffusion:
+  predict_xstart: True
+
 decoder:
   len_dec: 16
+  frame_size: 1
+  zero: True
 
 latent:
   latent_size: 0 # no latent space. no encoder

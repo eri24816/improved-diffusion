@@ -73,3 +73,46 @@ class RelativePositionBias(nn.Module):
         rp_bucket = self._relative_position_bucket(rel_pos, num_buckets = self.num_buckets, max_distance = self.max_distance)
         values = self.relative_attention_bias(rp_bucket)
         return rearrange(values, 'i j h -> h i j')
+
+def count_parameters(model):
+    print(f'param count of {type(model)}: {sum(p.numel() for p in model.parameters() if p.requires_grad)/1_000_000}M')
+
+class SpaceTemporalAttention(nn.Module):
+    def __init__(
+        self,
+        dim,
+        heads = 8,
+        dim_head = 64,
+        dropout = 0.
+    ):
+        super().__init__()
+        inner_dim = dim_head * heads
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.to_q = nn.Linear(dim, inner_dim, bias = False)
+        self.to_kv = nn.Linear(dim, inner_dim * 2, bias = False)
+        self.to_out = nn.Linear(inner_dim, dim)
+        self.dropout = nn.Dropout(dropout)
+        self.relative_position_bias = RelativePositionBias(heads = heads)
+
+    def forward(self, x, device):
+        b, n, _, h = *x.shape, self.heads
+        q = self.to_q(x)
+        kv = self.to_kv(x)
+        k, v = rearrange(kv, 'b n (h k v) -> b h n k v', h = h)
+
+        q, k, v = map(lambda t: rearrange(t, 'b h n d -> b h n () d'), (q, k, v))
+
+        dots = torch.einsum('bhid,bhjd->bhij', q, k) * self.scale
+        relative_position_bias = self.relative_position_bias(n, device)
+        dots = dots + relative_position_bias
+
+        attn = dots.softmax(dim = -1)
+        attn = self.dropout(attn)
+
+        out = torch.einsum('bhij,bhjd->bhid', attn, v)
+        out = rearrange(out, 'b h n () d -> b n h d')
+        out = self.to_out(out)
+
+        return out

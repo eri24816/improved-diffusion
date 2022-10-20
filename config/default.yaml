@@ -12,6 +12,7 @@ diffusion:
   sigma_small: False
   use_scale_shift_norm: True
   learn_sigma: True
+  use_loss_mask: False
 
 encoder:
   len_enc: 1
