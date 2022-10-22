@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import random
 from torch.utils.data import DataLoader, Dataset
@@ -74,30 +75,39 @@ class PianoRollDataset(Dataset):
     def __len__(self):
         return self.length
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> torch.Tensor:
         if self.segment_length:
             piece, start, end = self.segment_id_to_piece[idx]
             return piece.to_tensor(start, end, padding = True)/64-1 # [-1,1)
         else:
             return self.pianorolls[idx].to_tensor(0, self.max_duration, padding = True)/64-1 # [-1,1)
 
-    def get_piano_roll(self, idx):
+    def get_piano_roll(self, idx) -> PianoRoll:
         if self.segment_length:
             piece, start, end = self.segment_id_to_piece[idx]
             return piece.slice(start, end)
         else:
             return self.pianorolls[idx].slice(0, self.max_duration)
 
-    def get_all_piano_rolls(self):
+    def get_all_piano_rolls(self) -> list[PianoRoll]:
         return [self.get_piano_roll(i) for i in range(len(self))]
 
 class PianoRoll:
+    '''
+    
+    '''
     @ staticmethod
     def load(path):
+        '''
+        Load a pianoroll from a json file
+        '''
         return PianoRoll(io_util.json_load(path))
 
     @ staticmethod
     def from_tensor(tens, thres = 5, normalized = False):
+        '''
+        Convert a tensor to a pianoroll
+        '''
         if normalized:
             tens = (tens+1)*64
         tens = tens.cpu().to(torch.int32).clamp(0,127)
@@ -111,6 +121,9 @@ class PianoRoll:
     
     @ staticmethod
     def from_midi(path):
+        '''
+        Load a pianoroll from a midi file
+        '''
         midi = miditoolkit.midi.parser.MidiFile(path)
         data = {"onset_events":[],"pedal_events":[]}
         for note in midi.instruments[0].notes:
@@ -140,29 +153,19 @@ class PianoRoll:
 
         self.offsets = self.get_offsets_with_pedal()
 
-    def slice(self,start_time : int = 0, end_time : int = inf):
-        length = end_time - start_time
-        sliced_notes = []
-        sliced_pedal = []
-        for time, pitch, vel in self.notes:
-            rel_time = time - start_time
-            # only contain notes between start_time and end_time
-            if rel_time < 0: continue
-            if rel_time >= length : break
-            sliced_notes.append([rel_time,pitch,vel])
+    '''
+    ==================
+    Type conversion
+    ==================
+    '''
 
-        for pedal in self.pedal:
-            time = pedal
-            rel_time = time - start_time
-            # only contain pedal between start_time and end_time
-            if rel_time < 0: continue
-            if rel_time >= length : break
-            sliced_pedal.append(rel_time)
-
-        return PianoRoll({"onset_events":sliced_notes,"pedal_events":sliced_pedal})
-
+    def save(self,path):
+        io_util.json_dump({"onset_events":self.notes,"pedal_events":self.pedal},path)
 
     def to_tensor(self, start_time : int = 0, end_time : int = inf, padding = False, normalized = False) -> torch.Tensor:
+        '''
+        Convert the pianoroll to a tensor
+        '''
         if padding:
             # zero pad to end_time
             assert end_time != inf
@@ -184,13 +187,56 @@ class PianoRoll:
         if normalized:
             piano_roll = piano_roll/64-1
         return piano_roll
+    
+    def to_midi(self,path = None,encode_pedal = True) -> miditoolkit.midi.parser.MidiFile:
+        '''
+        Convert the pianoroll to a midi file
+        '''
+        midi = miditoolkit.midi.parser.MidiFile()
+        midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name='Piano')]
+        notes = [note + [offset] for note, offset in zip(self.notes,self.offsets)]
+        midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
+        for  onset, pitch, vel, offset in notes:
+            midi.instruments[0].notes.append(
+                miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
+            )
+        if path:
+            midi.dump(path)
+        return midi
+
+    '''
+    ==================
+    Basic operations
+    ==================
+    '''
+
+    def slice(self,start_time : int = 0, end_time : int = inf) -> PianoRoll:
+        '''
+        Slice a pianoroll from start_time to end_time
+        '''
+        length = end_time - start_time
+        sliced_notes = []
+        sliced_pedal = []
+        for time, pitch, vel in self.notes:
+            rel_time = time - start_time
+            # only contain notes between start_time and end_time
+            if rel_time < 0: continue
+            if rel_time >= length : break
+            sliced_notes.append([rel_time,pitch,vel])
+
+        for pedal in self.pedal:
+            time = pedal
+            rel_time = time - start_time
+            # only contain pedal between start_time and end_time
+            if rel_time < 0: continue
+            if rel_time >= length : break
+            sliced_pedal.append(rel_time)
+
+        return PianoRoll({"onset_events":sliced_notes,"pedal_events":sliced_pedal})
 
     def get_random_tensor_clip(self,duration,normalized = False):
         start_time = random.randint(0,(self.duration-duration)//32)*32
         return self.to_tensor(start_time, start_time+duration, normalized = normalized)
-
-    def save(self,path):
-        io_util.json_dump({"onset_events":self.notes,"pedal_events":self.pedal},path)
 
     def get_offsets_with_pedal(self):
         offsets = []
@@ -212,18 +258,7 @@ class PianoRoll:
         offsets = list(reversed(offsets))
         return offsets
 
-    def to_midi(self,path = None):
-        midi = miditoolkit.midi.parser.MidiFile()
-        midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name='Piano')]
-        notes = [note + [offset] for note, offset in zip(self.notes,self.offsets)]
-        midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
-        for  onset, pitch, vel, offset in notes:
-            midi.instruments[0].notes.append(
-                miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
-            )
-        if path:
-            midi.dump(path)
-        return midi
+
 
 if __name__ == '__main__':  
     d = PianoRollDataset('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll', 2*32)
