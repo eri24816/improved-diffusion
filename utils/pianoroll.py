@@ -144,7 +144,7 @@ class PianoRoll:
         data = {"onset_events":[],"pedal_events":[]}
         for note in midi.instruments[0].notes:
             note : miditoolkit.Note
-            data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity])
+            data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity,int(note.end*8/midi.ticks_per_beat)])
         return PianoRoll(data)
 
     def __init__(self, data : dict):
