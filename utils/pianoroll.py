@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 import os
 import random
 from torch.utils.data import DataLoader, Dataset
@@ -171,18 +172,20 @@ class PianoRoll:
     Utils
     ==================
     '''
-    def _note_data(self):
+    def get_notes_data(self,notes = None):
         '''
         generator that yields (onset, pitch, velocity, offset iterator)
         '''
-        for note in self.notes:
+        if notes is None:
+            notes = self.notes
+        for note in notes:
             yield note.onset, note.pitch, note.velocity, note.offset
     
     def get_offsets_with_pedal(self,pedal) -> list[int]:
         offsets = []
         next_onset = [inf]*88
         i = len(pedal)
-        for onset, pitch, vel, _ in reversed(list(self._note_data())): #TODO: handle offsets if there are ones
+        for onset, pitch, vel, _ in reversed(list(self.get_notes_data())): #TODO: handle offsets if there are ones
             pitch -= 21 # midi number to piano
             while i > 0 and pedal[i-1] > onset:
                 i -= 1
@@ -226,7 +229,7 @@ class PianoRoll:
         size = [length, 88]
         piano_roll = torch.zeros(size)
 
-        for time, pitch, vel, _ in self._note_data():
+        for time, pitch, vel, _ in self.get_notes_data():
             rel_time = time - start_time
             # only contain notes between start_time and end_time
             if rel_time < 0: continue
@@ -238,36 +241,105 @@ class PianoRoll:
             piano_roll = piano_roll/64-1
         return piano_roll
     
-    def to_midi(self,path = None,apply_pedal = True) -> miditoolkit.midi.parser.MidiFile:
+    def to_midi(self,path = None,apply_pedal = True, pretty_score = False) -> miditoolkit.midi.parser.MidiFile:
         '''
         Convert the pianoroll to a midi file
         '''
         midi = miditoolkit.midi.parser.MidiFile()
         midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name='Piano')]
         midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
+
+        notes = deepcopy(self.notes)
         if apply_pedal:
             if self.pedal:
                 pedal = self.pedal
             else:
                 pedal = list(range(0,self.duration,32))
             offsets = self.get_offsets_with_pedal(pedal)
-            for i, (onset, pitch, vel, _) in enumerate(self._note_data()):
-                offset = offsets[i]
-                midi.instruments[0].notes.append(
-                    miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
-                )
-        if not apply_pedal:
+            for i, note in enumerate(notes):
+                note.offset = offsets[i]
+        else:
             assert self._have_offset, "Offset not found"
-            for onset, pitch, vel, offset in self._note_data():
-                assert offset is not None, "Offset not found"
-                midi.instruments[0].notes.append(
-                    miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
-                )
+
+        if pretty_score:
+            notes = self.note_data_pretty_score(notes)
+
+        for onset, pitch, vel, offset in self.get_notes_data(notes):
+            assert offset is not None, "Offset not found"
+            midi.instruments[0].notes.append(
+                miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
+            )
 
         if path:
             midi.dump(path)
         return midi
 
+    def note_data_pretty_score(self,notes:list[Note])->list[Note]:
+        '''
+        Warning: this function will modify the input list
+        '''
+        # separate left and right hand
+        left_hand:list[Note]  = []
+        right_hand:list[Note]  = []
+        def loss(note,prev_notes,which_hand,max_depth = 5,separate_point = 60,position_weight = 0.5):
+            res = 0
+            for prev_note in prev_notes[-max_depth:]:
+                dt = note.onset - prev_note.onset
+                dp = note.pitch - prev_note.pitch
+                loss = max(0,abs(dp)-10-8*dt)
+                res += loss
+            if which_hand == "l":
+                res += (note.pitch-separate_point)*position_weight
+            elif which_hand == "r":
+                res -= (note.pitch-separate_point)*position_weight
+            else:
+                raise ValueError("which_hand must be 'l' or 'r'")
+            return res
+        
+        # recursively search for min loss
+        def cummulative_loss(past_notes_l,past_notes_r,future_notes,max_depth = 4):
+            future_notes = future_notes[:max_depth]
+            if len(future_notes) == 0:
+                return 0,'l'
+            else:
+                future_loss_l = cummulative_loss(past_notes_l + [future_notes[0]],past_notes_r,future_notes[1:])[0]
+                future_loss_r = cummulative_loss(past_notes_l,past_notes_r + [future_notes[0]],future_notes[1:])[0]
+                loss_l = future_loss_l + loss(future_notes[0],past_notes_l,"l")
+                loss_r = future_loss_r + loss(future_notes[0],past_notes_r,"r")
+                if loss_l < loss_r:
+                    return loss_l,'l'
+                else:
+                    return loss_r,'r'
+        
+        while len(notes):
+            _,hand = cummulative_loss(left_hand,right_hand,notes)
+            if hand == 'l':
+                left_hand.append(notes.pop(0))
+            else:
+                right_hand.append(notes.pop(0))
+
+            
+        def pretty_voice(voice: list[Note]):
+            current = []
+            for note in voice:
+                if len(current) == 0:
+                    current.append(note)
+                else:
+                    if note.onset == current[-1].onset:
+                        current.append(note)
+                    else:
+                        stop_time = note.onset
+                        for c in current:
+                            c.offset = stop_time
+                        current = [note]
+        
+        pretty_voice(left_hand)
+        pretty_voice(right_hand)
+        res = left_hand + right_hand
+        res.sort(key = lambda x:x.onset)
+        return res
+
+        
     '''
     ==================
     Basic operations
@@ -304,15 +376,15 @@ class PianoRoll:
         '''
         Get a random clip of the pianoroll
         '''
-        start_time = random.randint(0,(self.duration-duration)//32)*32
+        start_time = random.randint(0,(self.duration-duration)//32)*32 # snap to bar
         return self.to_tensor(start_time, start_time+duration, normalized = normalized)
 
 
 if __name__ == '__main__':  
     # test
-    d = PianoRollDataset('/home/eri24816/pianoroll/', 2*32,max_pieces=3)
-    orig = d[0]
-    file_name = '/tmp/pianoroll_test.mid'
-    PianoRoll.from_tensor(orig,0,normalized=True).to_midi(file_name)
+    d = PianoRollDataset('/home/eri24816/pianoroll/', 6*32,max_pieces=3)
+    orig = d[100]
+    file_name = 'legacy/pianoroll_test.mid'
+    PianoRoll.from_tensor(orig,0,normalized=True).to_midi(file_name,pretty_score=True)
     recons = PianoRoll.from_midi(file_name).to_tensor(normalized=True)
-    assert ((orig- recons[:64])**2).sum()==0
+    assert ((orig- recons[:6*32])**2).sum()==0 
