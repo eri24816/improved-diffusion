@@ -1,3 +1,6 @@
+import os, sys
+from os import path
+
 from utils.pianoroll import PianoRoll, PianoRollDataset
 from tqdm import tqdm
 
@@ -10,29 +13,48 @@ def dot_sim(x,y):
 def proj_sim(x,y):
     return ((x*y).sum())/x.norm()
 
+def mse(x,y):
+    return -((x-y)**2).mean()
 
-def sort_by_similarity(x: PianoRoll,ys : 'list[PianoRoll]' ,sim_function = cosine_sim):
+def iou(x,y):
+    return (x*y).sum()/(x+y-x*y).sum()
+
+def sort_by_similarity(x,ys : 'list[PianoRoll]' ,sim_function = mse):
     scores={} 
-    x = x.to_tensor(0,64,True)
+    x = x.to_tensor()/128
     for y in tqdm(ys):
-        scores[y]=sim_function(x,y.to_tensor(0,64,padding=True))
+        scores[y]=sim_function(x,y.to_tensor(0,x.shape[0],padding=True)/128).item()
     ys = sorted(ys,key=lambda y: scores[y])
     scores = sorted(scores.values())
-    return ys, scores
+    return ys, scores, x
 
+if __name__ == '__main__': 
 
-if __name__ == '__main__':
-    import os
-    from os import path
-    data_dir = '/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll'
-    ds = PianoRollDataset(data_dir,64).get_all_piano_rolls()
+    # keys
+    data_dir = '/home/eri24816/pianoroll'
+    keys = PianoRollDataset(data_dir,32,32).get_all_piano_rolls()
 
-    sample_dir = 'log/2bb/samples/ema_0.9999_1800000/49.mid'
-    target_pr = PianoRoll.from_midi(sample_dir)
-    #target_pr = ds[0]
-    ys, scores = sort_by_similarity(target_pr,ds,proj_sim)
+    # query
+    query_file = sys.argv[1]
+    query = PianoRoll.from_midi(query_file).slice(32*15,32*16)
+    
+    # save query
+    p = query_file.replace('.mid','similar')+'/query.mid'
+    os.makedirs(path.dirname(p),exist_ok=True)
+    query.to_midi(p)
 
+    keys.append(query) # add query to keys to check similarity function
+    
+    # sort by similarity
+    ys, scores, x = sort_by_similarity(query,keys,mse)
+    print(scores[:10],scores[-10:])
+
+    # save 10 most similar
     for i, y in enumerate(list(reversed(ys))[:10]):
-        p = sample_dir.replace('.mid','sim')+f'/{i}.mid'
+        p = query_file.replace('.mid','similar')+f'/{i}.mid'
         os.makedirs(path.dirname(p),exist_ok=True)
         y.to_midi(p)
+
+
+
+    print('done')
