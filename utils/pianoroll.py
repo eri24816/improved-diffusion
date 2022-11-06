@@ -51,7 +51,7 @@ import miditoolkit
 from utils import io_util
 
 class PianoRollDataset(Dataset):
-    def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1, max_pieces = inf):
+    def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1, max_pieces = None):
         print(f'Creating dataset {segment_len}')
         self.pianorolls : list[PianoRoll] = []
 
@@ -161,7 +161,10 @@ class PianoRoll:
             self.pedal = None
 
         if len(self.notes):
-            self.duration = self.notes[-1].onset + 16 # extend a bar to ensure the last note is covered completely
+            if self.notes[-1].offset is None:
+                self.duration = ceil((self.notes[-1].onset + 1)/32)*32
+            else:
+                self.duration = ceil((self.notes[-1].offset)/32)*32
         else:
             self.duration = 0
 
@@ -172,7 +175,7 @@ class PianoRoll:
     Utils
     ==================
     '''
-    def get_notes_data(self,notes = None):
+    def iter_over_notes(self,notes = None):
         '''
         generator that yields (onset, pitch, velocity, offset iterator)
         '''
@@ -185,7 +188,7 @@ class PianoRoll:
         offsets = []
         next_onset = [inf]*88
         i = len(pedal)
-        for onset, pitch, vel, _ in reversed(list(self.get_notes_data())): #TODO: handle offsets if there are ones
+        for onset, pitch, vel, _ in reversed(list(self.iter_over_notes())): #TODO: handle offsets if there are ones
             pitch -= 21 # midi number to piano
             while i > 0 and pedal[i-1] > onset:
                 i -= 1
@@ -229,7 +232,7 @@ class PianoRoll:
         size = [length, 88]
         piano_roll = torch.zeros(size)
 
-        for time, pitch, vel, _ in self.get_notes_data():
+        for time, pitch, vel, _ in self.iter_over_notes():
             rel_time = time - start_time
             # only contain notes between start_time and end_time
             if rel_time < 0: continue
@@ -241,14 +244,10 @@ class PianoRoll:
             piano_roll = piano_roll/64-1
         return piano_roll
     
-    def to_midi(self,path = None,apply_pedal = True, pretty_score = False) -> miditoolkit.midi.parser.MidiFile:
+    def to_midi(self,path = None,apply_pedal = True) -> miditoolkit.midi.parser.MidiFile:
         '''
         Convert the pianoroll to a midi file
         '''
-        midi = miditoolkit.midi.parser.MidiFile()
-        midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name='Piano')]
-        midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
-
         notes = deepcopy(self.notes)
         if apply_pedal:
             if self.pedal:
@@ -260,34 +259,40 @@ class PianoRoll:
                 note.offset = offsets[i]
         else:
             assert self._have_offset, "Offset not found"
+        return self._save_to_midi([notes],path)
 
-        if pretty_score:
-            notes = self.note_data_pretty_score(notes)
 
-        for onset, pitch, vel, offset in self.get_notes_data(notes):
-            assert offset is not None, "Offset not found"
-            midi.instruments[0].notes.append(
-                miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
-            )
+    def _save_to_midi(self,instrs,path):
+        midi = miditoolkit.midi.parser.MidiFile()
+        midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name=f'Piano{i}') for i in range(len(instrs))]
+        midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
+        for i,notes in enumerate(instrs):
+            for onset, pitch, vel, offset in self.iter_over_notes(notes):
+                assert offset is not None, "Offset not found"
+                midi.instruments[i].notes.append(
+                    miditoolkit.Note(vel, pitch, int(onset*midi.ticks_per_beat/8), int(offset*midi.ticks_per_beat/8))
+                )
 
         if path:
             midi.dump(path)
         return midi
 
-    def note_data_pretty_score(self,notes:list[Note])->list[Note]:
-        '''
-        Warning: this function will modify the input list
-        '''
+    def save_to_pretty_score(self,path,separate_point = 60,position_weight = 3)->list[Note]:
+        notes = deepcopy(self.notes)
         # separate left and right hand
         left_hand:list[Note]  = []
         right_hand:list[Note]  = []
-        def loss(note,prev_notes,which_hand,max_depth = 5,separate_point = 60,position_weight = 0.5):
+        def loss(note,prev_notes,which_hand,max_dist = 16,separate_point = 60,position_weight = 3):
             res = 0
-            for prev_note in prev_notes[-max_depth:]:
+            
+            for prev_note in reversed(prev_notes):
                 dt = note.onset - prev_note.onset
                 dp = note.pitch - prev_note.pitch
-                loss = max(0,abs(dp)-10-8*dt)
+                if dt > max_dist:
+                    break
+                loss = max(0,abs(dp)-5-8*dt)
                 res += loss
+                
             if which_hand == "l":
                 res += (note.pitch-separate_point)*position_weight
             elif which_hand == "r":
@@ -297,15 +302,15 @@ class PianoRoll:
             return res
         
         # recursively search for min loss
-        def cummulative_loss(past_notes_l,past_notes_r,future_notes,max_depth = 4):
+        def cummulative_loss(past_notes_l,past_notes_r,future_notes,max_depth = 4, discount_factor = 0.9):
             future_notes = future_notes[:max_depth]
             if len(future_notes) == 0:
                 return 0,'l'
             else:
                 future_loss_l = cummulative_loss(past_notes_l + [future_notes[0]],past_notes_r,future_notes[1:])[0]
                 future_loss_r = cummulative_loss(past_notes_l,past_notes_r + [future_notes[0]],future_notes[1:])[0]
-                loss_l = future_loss_l + loss(future_notes[0],past_notes_l,"l")
-                loss_r = future_loss_r + loss(future_notes[0],past_notes_r,"r")
+                loss_l = future_loss_l*discount_factor + loss(future_notes[0],past_notes_l,"l",16,separate_point,position_weight)
+                loss_r = future_loss_r*discount_factor + loss(future_notes[0],past_notes_r,"r",16,separate_point,position_weight)
                 if loss_l < loss_r:
                     return loss_l,'l'
                 else:
@@ -335,9 +340,10 @@ class PianoRoll:
         
         pretty_voice(left_hand)
         pretty_voice(right_hand)
-        res = left_hand + right_hand
-        res.sort(key = lambda x:x.onset)
-        return res
+        res = [right_hand,left_hand]
+        print("left hand notes:",len(left_hand))
+        print("right hand notes:",len(right_hand))
+        self._save_to_midi(res,path)
 
         
     '''
@@ -353,12 +359,16 @@ class PianoRoll:
         length = end_time - start_time
         sliced_notes = []
         sliced_pedal = []
-        for time, pitch, vel, offset in self._note_data():
+        for time, pitch, vel, offset in self.iter_over_notes():
             rel_time = time - start_time
+            if offset is not None:
+                rel_offset = offset - start_time
+            else:
+                rel_offset = None
             # only contain notes between start_time and end_time
             if rel_time < 0: continue
             if rel_time >= length : break
-            sliced_notes.append([rel_time,pitch,vel,offset])
+            sliced_notes.append([rel_time,pitch,vel,rel_offset])
 
         if self.pedal:
             for pedal in self.pedal:
@@ -385,6 +395,6 @@ if __name__ == '__main__':
     d = PianoRollDataset('/home/eri24816/pianoroll/', 6*32,max_pieces=3)
     orig = d[100]
     file_name = 'legacy/pianoroll_test.mid'
-    PianoRoll.from_tensor(orig,0,normalized=True).to_midi(file_name,pretty_score=True)
+    PianoRoll.from_tensor(orig,0,normalized=True).to_midi(file_name)
     recons = PianoRoll.from_midi(file_name).to_tensor(normalized=True)
     assert ((orig- recons[:6*32])**2).sum()==0 
