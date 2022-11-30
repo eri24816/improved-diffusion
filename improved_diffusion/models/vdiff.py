@@ -189,7 +189,8 @@ class RelAttention(nn.Module):
         self,
         dim,
         heads = 4,
-        rotary_emb = None
+        max_distance = 16,
+        rotary_emb = None,
     ):
         '''
         input : [... frame d]
@@ -204,7 +205,7 @@ class RelAttention(nn.Module):
         self.rotary_emb = rotary_emb
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias = False)
         self.to_out = nn.Linear(hidden_dim, dim, bias = False)
-        self.relpb = RelativePositionBias(heads = self.heads, max_distance = 32)
+        self.relpb = RelativePositionBias(heads = self.heads, max_distance = max_distance)
 
     def forward(
         self,
