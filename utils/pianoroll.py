@@ -250,10 +250,12 @@ class PianoRoll:
 
         io_util.json_dump({"onset_events":self.notes,"pedal_events":self.pedal},path)
 
-    def to_tensor(self, start_time : int = 0, end_time : int = inf, padding = False, normalized = False) -> torch.Tensor:
+    def to_tensor(self, start_time : int = 0, end_time : int = inf, padding = False, normalized = False, chromagram = False) -> torch.Tensor:
         '''
         Convert the pianoroll to a tensor
         '''
+        n_features = 88 if not chromagram else 12
+
         if padding:
             # zero pad to end_time
             assert end_time != inf
@@ -261,7 +263,7 @@ class PianoRoll:
         else:
             length = min(self.duration, end_time) - start_time
 
-        size = [length, 88]
+        size = [length, n_features]
         piano_roll = torch.zeros(size)
 
         for time, pitch, vel, _ in self.iter_over_notes():
@@ -270,7 +272,9 @@ class PianoRoll:
             if rel_time < 0: continue
             if rel_time >= length : break
             pitch -= 21 # midi to piano
-            piano_roll[rel_time,pitch] = vel
+            if chromagram:
+                pitch = (pitch + 9)%12
+            piano_roll[rel_time,pitch] += vel
 
         if normalized:
             piano_roll = piano_roll/64-1
