@@ -9,7 +9,7 @@ import os
 import torch as th
 import torch.distributed as dist
 
-from improved_diffusion import dist_util, logger
+from improved_diffusion import dist_util, logger, guiders
 from improved_diffusion.script_util import get_config, create_model, create_gaussian_diffusion
 
 
@@ -47,10 +47,19 @@ def main():
     model.eval()
     encoder = model['encoder'] if 'encoder' in model else None
     eps_model = model['eps_model']
+
+    print(eps_model.transformer[0].temporal_attn.fn.relpb.max_distance)
     
+    base_song = PianoRoll.load('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll/0.json').slice(32,32+32*len_dec)
+    print('base song:',base_song)
+    x_a = base_song.to_tensor(normalized=True,end_time=32*len_dec).to(dist_util.dev())
+    print(dist_util.dev())
+    a_mask = x_a*0 # who use zeros_like XD
+    a_mask[0:32*8] = 1
+    guider = guiders.MaskedGuider(x_a,a_mask,1)
 
     logger.log("sampling...")
-    save_path = os.path.join(logger.get_dir(),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/')
+    save_path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/')
     all_images = []
     all_labels = []
     i=0
@@ -72,12 +81,15 @@ def main():
             clip_denoised=conf['clip_denoised'],
             #noise = noise,
             model_kwargs=model_kwargs,
+            #denoised_fn=guider.guide,
+            progress=True,
         )
         for s in sample:
             # save midi
-            path = os.path.join(logger.get_dir(),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/', f"{i}.mid")
+            path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/', f"{i}.mid")
             i+=1
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            print('saving',path)
             PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
 
         all_images+=[s for s in sample]

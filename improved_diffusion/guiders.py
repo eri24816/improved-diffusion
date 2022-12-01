@@ -22,7 +22,7 @@ class MaskedGuider(Guider):
     def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
         # calculate the grad on z_b
         z.requires_grad = True
-        ((x_pred - self.x_a)**2)*self.a_mask.backward()
+        (((x_pred - self.x_a)**2)*self.a_mask).sum().backward()
         z_b_grad = z.grad * self.b_mask
 
         # guide the x_b

@@ -31,6 +31,8 @@ decoder:
   n_blocks: 4
   n_heads: 8
 
+  spec_num_frames: -1 # the current model was wrongly set num_frames as 32. To use the checkpoints, set it to 32.
+
 training:
   lr: 1.0e-4
   weight_decay: 0.0

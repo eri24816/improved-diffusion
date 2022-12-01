@@ -7,6 +7,7 @@ decoder:
   len_dec: 16
   frame_size: 1
   zero: True
+  spec_num_frames: 32
 
 latent:
   latent_size: 0 # no latent space. no encoder
@@ -17,5 +18,5 @@ training:
 
 sampling:
   batch_size: 4
-  num_samples: 32
+  num_samples: 4
   model_path: "log/16bar_v_scratch_zero_lm/ema_0.9999_2700000.pt"

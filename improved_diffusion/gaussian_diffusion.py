@@ -5,6 +5,7 @@ https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0
 Docstrings have been added, as well as DDIM sampling and a new collection of beta schedules.
 """
 
+from contextlib import nullcontext
 import enum
 import math
 
@@ -260,6 +261,9 @@ class GaussianDiffusion:
 
         B, C = x.shape[:2]
         assert t.shape == (B,)
+        if denoised_fn is not None: # the guider needs grad on x
+            x = x.detach()
+            x.requires_grad = True
         model_output = model(x, self._scale_timesteps(t), **model_kwargs)
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
@@ -502,7 +506,7 @@ class GaussianDiffusion:
 
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            with th.no_grad():
+            with th.no_grad() if denoised_fn is None else nullcontext():
                 out = self.p_sample(
                     model,
                     img,
