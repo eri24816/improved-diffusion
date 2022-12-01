@@ -140,6 +140,7 @@ class GaussianDiffusion:
         self.num_timesteps = int(betas.shape[0])
 
         alphas = 1.0 - betas
+        self.alphas = alphas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
@@ -292,23 +293,24 @@ class GaussianDiffusion:
             model_variance = _extract_into_tensor(model_variance, t, x.shape)
             model_log_variance = _extract_into_tensor(model_log_variance, t, x.shape)
 
-        def process_xstart(x):
+        def process_xstart(x,pred_xstart):
+            # Denoised_fn is a guider.
             if denoised_fn is not None:
-                x = denoised_fn(x)
+                x = denoised_fn(x,pred_xstart,_extract_into_tensor(self.alphas, t, x.shape))
             if clip_denoised:
                 return x.clamp(-1, 1)
             return x
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:
-            pred_xstart = process_xstart(
+            pred_xstart = process_xstart(x,
                 self._predict_xstart_from_xprev(x_t=x, t=t, xprev=model_output)
             )
             model_mean = model_output
         elif self.model_mean_type in [ModelMeanType.START_X, ModelMeanType.EPSILON]:
             if self.model_mean_type == ModelMeanType.START_X:
-                pred_xstart = process_xstart(model_output)
+                pred_xstart = process_xstart(x,model_output)
             else:
-                pred_xstart = process_xstart(
+                pred_xstart = process_xstart(x,
                     self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output)
                 )
             model_mean, _, _ = self.q_posterior_mean_variance(
