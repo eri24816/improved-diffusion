@@ -17,7 +17,7 @@ class TransformerEncoderLayer(nn.Module):
     '''
     __constants__ = ['batch_first', 'norm_first']
 
-    def __init__(self, d_model: int, nhead: int, dim_feedforward: int = 2048, dropout: float = 0.1,
+    def __init__(self, d_model: int, nhead: int,max_distance, dim_feedforward: int = 2048, dropout: float = 0.1,
                  activation: Union[str, Callable[[Tensor], Tensor]] = F.relu,
                  layer_norm_eps: float = 1e-5, batch_first: bool = False, norm_first: bool = False,
                  device=None, dtype=None) -> None:
@@ -25,7 +25,7 @@ class TransformerEncoderLayer(nn.Module):
         super(TransformerEncoderLayer, self).__init__()
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first,**factory_kwargs)
         self.self_attn = EinopsToAndFrom('b f l d', '(b f) l d',lambda x,*args,**kwargs: self.attn(x,x,x,*args,**kwargs)[0])
-        self.temporal_attn = EinopsToAndFrom('b f l d', 'b l f d', RelAttention(d_model, heads = nhead)) #* no rotary embedding yet
+        self.temporal_attn = EinopsToAndFrom('b f l d', 'b l f d', RelAttention(d_model, heads = nhead,max_distance=max_distance)) #* no rotary embedding yet
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward, **factory_kwargs)
         self.dropout = nn.Dropout(dropout)
@@ -98,7 +98,7 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class FFTransformer(nn.Module):
-    def __init__(self,d,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False, Nonlinearity = nn.SiLU, frame_size = 1, init_out = None) -> None:
+    def __init__(self,d,num_frames,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False, Nonlinearity = nn.SiLU, frame_size = 1, init_out = None) -> None:
         super().__init__()
 
         self.init_out = init_out
@@ -127,7 +127,7 @@ class FFTransformer(nn.Module):
             )
         )
 
-        self.transformer = nn.Sequential(*[TransformerEncoderLayer(d_model=d, nhead=n_heads,batch_first=True) for _ in range(n_blocks)])
+        self.transformer = nn.Sequential(*[TransformerEncoderLayer(d_model=d, nhead=n_heads,max_distance=num_frames,batch_first=True) for _ in range(n_blocks)])
 
         self.out_block = nn.Sequential(# [B,L,D] -> [B,L,P]
             nn.Linear(d,88)

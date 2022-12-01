@@ -19,7 +19,7 @@ def create_model(config):
         models['encoder'] = Encoder(cEnc['dim_internal'],cEnc['n_blocks'],cEnc['n_heads'],out_d=cLat['latent_size'],length=cEnc['len_enc']*32)
 
     init_out = (-1 if config['diffusion']['predict_xstart'] else 0) if cDec['zero'] else None # tensor -1 is midi 0
-    models['eps_model'] = FFTransformer(cDec['dim_internal'],cDec['n_blocks'],cDec['n_heads'],learn_sigma=config['diffusion']['learn_sigma'],d_cond=cLat['latent_size'],frame_size=cDec['frame_size']*32,init_out=init_out)
+    models['eps_model'] = FFTransformer(cDec['dim_internal'],cDec['len_dec'],cDec['n_blocks'],cDec['n_heads'],learn_sigma=config['diffusion']['learn_sigma'],d_cond=cLat['latent_size'],frame_size=cDec['frame_size']*32,init_out=init_out)
 
     return torch.nn.ModuleDict(models)
 
@@ -91,13 +91,18 @@ def merge_configs(default_config, config):
             merge_configs(v, config[k])
     return config
 
-def get_config():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/default.yaml')
-    args = parser.parse_args()
-
+def get_config(path = None):
     default_config = yaml.safe_load(open('config/default.yaml', 'r'))
-    config_override = yaml.safe_load(open(args.config, 'r'))
+
+    if path is not None:
+        with open(path, 'r') as f:
+            config_override = yaml.safe_load(f)
+    else:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config', type=str)
+        args = parser.parse_args()
+
+        config_override = yaml.safe_load(open(args.config, 'r'))
 
     config = merge_configs(default_config, config_override)
 

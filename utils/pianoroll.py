@@ -1,9 +1,10 @@
 from __future__ import annotations
 from copy import deepcopy
+from dataclasses import dataclass
 import os
 import random
 from torch.utils.data import DataLoader, Dataset
-from mpi4py import MPI
+
 
 def load_data(
     *, data_dir, batch_size, segment_length = 0, deterministic=False
@@ -24,6 +25,7 @@ def load_data(
                        exception will be raised.
     :param deterministic: if True, yield results in a deterministic order.
     """
+    from mpi4py import MPI
     if not data_dir:
         raise ValueError("unspecified data directory")
     dataset = PianoRollDataset(
@@ -49,16 +51,27 @@ import torch
 import glob
 import miditoolkit
 from utils import io_util
+import pandas
 
 class PianoRollDataset(Dataset):
-    def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1, max_pieces = None):
+    def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1, max_pieces = None, metadata_file = None):
         print(f'Creating dataset {segment_len}')
+        if metadata_file is not None:
+            metadata = pandas.read_csv(metadata_file)
+        else:
+            metadata = None
         self.pianorolls : list[PianoRoll] = []
 
         file_list = list(glob.glob(os.path.join(data_dir,"*.json")))
         file_list = file_list[:max_pieces]
         for file_path in file_list:
-            self.pianorolls.append(PianoRoll.load(file_path))
+            new_pr = PianoRoll.load(file_path)
+            if metadata is not None:
+                song_id = int(file_path.split('/')[-1].split('.json')[0])
+                meta = metadata[metadata['id'] == song_id].iloc[0]
+                new_pr.set_metadata(name = meta['title'])
+
+            self.pianorolls.append(new_pr)
         
         self.segment_length = segment_len
         if segment_len:
@@ -108,6 +121,12 @@ class Note:
         if self.onset == other.onset:
             return self.pitch > other.pitch
         return self.onset > other.onset
+
+@dataclass
+class PRMetadata:
+    name:str = ""
+    start_time:int = 0
+    end_time:int = 0
 
 class PianoRoll:
     '''
@@ -169,12 +188,25 @@ class PianoRoll:
             self.duration = 0
 
         self._have_offset = len(self.notes) == 0 or self.notes[0].offset is not None
+
+        self.metadata = PRMetadata("",0,self.duration)
+
+    def __repr__(self) -> str:
+        return f'PianoRoll Bar {self.metadata.start_time//32:03d} - {ceil(self.metadata.end_time/32):03d} of {self.metadata.name}'
     
     '''
     ==================
     Utils
     ==================
     '''
+    def set_metadata(self, name = None, start_time = None, end_time = None):
+        if name is not None:
+            self.metadata.name = name
+        if start_time is not None:
+            self.metadata.start_time = start_time
+        if end_time is not None:
+            self.metadata.end_time = end_time
+
     def iter_over_notes(self,notes = None):
         '''
         generator that yields (onset, pitch, velocity, offset iterator)
@@ -378,9 +410,12 @@ class PianoRoll:
                 if rel_time < 0: continue
                 if rel_time >= length : break
                 sliced_pedal.append(rel_time)
-            return PianoRoll({"onset_events":sliced_notes,"pedal_events":sliced_pedal})
+            new_pr = PianoRoll({"onset_events":sliced_notes,"pedal_events":sliced_pedal})
         else:
-            return PianoRoll({"onset_events":sliced_notes})
+            new_pr = PianoRoll({"onset_events":sliced_notes})
+
+        new_pr.set_metadata(self.metadata.name,self.metadata.start_time + start_time,self.metadata.start_time + end_time)
+        return new_pr
 
     def get_random_tensor_clip(self,duration,normalized = False):
         '''
@@ -388,7 +423,6 @@ class PianoRoll:
         '''
         start_time = random.randint(0,(self.duration-duration)//32)*32 # snap to bar
         return self.to_tensor(start_time, start_time+duration, normalized = normalized)
-
 
 if __name__ == '__main__':  
     # test
