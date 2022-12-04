@@ -8,6 +8,7 @@ import os
 
 import torch as th
 import torch.distributed as dist
+import random
 
 from improved_diffusion import dist_util, logger, guiders
 from improved_diffusion.script_util import get_config, create_model, create_gaussian_diffusion
@@ -50,16 +51,31 @@ def main():
 
     print(eps_model.transformer[0].temporal_attn.fn.relpb.max_distance)
     
-    base_song = PianoRoll.load('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll/0.json').slice(32,32+32*len_dec)
+    #base_song = PianoRoll.load('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll/0.json').slice(32,32+32*len_dec)
+    base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/5.mid')
     print('base song:',base_song)
-    x_a = base_song.to_tensor(normalized=True,end_time=32*len_dec).to(dist_util.dev())
+    x_a = []
+    for i in range(conf['batch_size']):
+        start_tick = random.randint(0,max(0,base_song.duration//32-4))*32
+        #start_tick = 8*32
+        print(start_tick/32)
+        x_a.append(base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True).to(dist_util.dev()))
+    x_a = th.stack(x_a,dim=0)
     print(dist_util.dev())
     a_mask = x_a*0 # who use zeros_like XD
-    a_mask[0:32*8] = 1
-    guider = guiders.MaskedGuider(x_a,a_mask,1)
+
+    
+    a_mask[:,0:32*8] = 1
+    #a_mask[:,:,41:] = a_mask[:,0:32*2,:] = 1
+    #a_mask[:,0:32*4] = a_mask[:,32*-4:] = 1
+
+    x_a *= a_mask #just to be sure the sampling process doesn't peek the groundtruth in case I implemented it wrong.
+    #guider = guiders.ExactGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
+    guider = guiders.ExactGuider(x_a,a_mask,10,None)
+    exp_name = '5'
 
     logger.log("sampling...")
-    save_path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/')
+    save_path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/',exp_name)
     all_images = []
     all_labels = []
     i=0
@@ -74,21 +90,22 @@ def main():
             model_kwargs["condition"] = generate_latent(conf, encoder, len_dec*32, save_path, i)
 
         # same noise for the whole batch
-        # noise = th.randn(1,*shape[1:],device=dist_util.dev()).expand(shape)
+        noise = th.randn(shape,device=dist_util.dev()).expand(shape)
+        guider.reset(noise)
         sample = sample_fn(
             eps_model,
             shape,
             clip_denoised=conf['clip_denoised'],
-            #noise = noise,
+            noise = noise,
             model_kwargs=model_kwargs,
-            #denoised_fn=guider.guide,
+            denoised_fn=guider.guide,
             progress=True,
         )
         for s in sample:
             # save midi
-            path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/', f"{i}.mid")
+            path = os.path.join(save_path, f"{i}.mid")
             i+=1
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.makedirs(save_path, exist_ok=True)
             print('saving',path)
             PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
 

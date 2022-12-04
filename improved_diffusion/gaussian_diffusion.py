@@ -233,6 +233,40 @@ class GaussianDiffusion:
         )
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
+    def q_posterior_sample(self, x_start, x_t, t, noise=None):
+        """
+        Sample from the diffusion posterior:
+
+            q(x_{t-1} | x_t, x_0)
+
+        """
+        if noise is None:
+            noise = th.randn_like(x_start)
+        assert noise.shape == x_start.shape
+        posterior_mean, posterior_variance, _ = self.q_posterior_mean_variance(
+            x_start, x_t, t
+        )
+        return posterior_mean + noise * th.sqrt(posterior_variance)
+
+    def q_posterior_sample_loop(self, x_start, max_t = None, min_t=0, x_T=None):
+        """
+        Sample from the diffusion posterior:
+
+            q(x_{t-1} | x_t, x_0)
+
+        """
+        if max_t is None:
+            max_t = self.num_timesteps
+        t = max_t-1
+        if x_T is None:
+            x_t = self.q_sample(x_start, th.tensor([t]*x_start.shape[0], device=x_start.device))
+        else:
+            x_t = x_T
+        yield x_t
+        while t > min_t:
+            t, x_t, = t-1, self.q_posterior_sample(x_start, x_t, th.tensor([t]*x_start.shape[0], device=x_start.device))
+            yield x_t
+
     def p_mean_variance(
         self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
     ):
@@ -299,11 +333,12 @@ class GaussianDiffusion:
 
         def process_xstart(x,pred_xstart):
             # Denoised_fn is a guider.
-            if denoised_fn is not None:
-                x = denoised_fn(x,pred_xstart,_extract_into_tensor(self.alphas, t, x.shape))
             if clip_denoised:
-                return x.clamp(-1, 1)
-            return x
+                pred_xstart = pred_xstart.clamp(-1, 1)
+            
+            if denoised_fn is not None:
+                pred_xstart = denoised_fn(x,pred_xstart,_extract_into_tensor(np.sqrt(self.alphas_cumprod), t, x.shape))
+            return pred_xstart
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:
             pred_xstart = process_xstart(x,
