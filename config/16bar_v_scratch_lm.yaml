@@ -17,6 +17,6 @@ training:
 #  resume_checkpoint: "log/16bar_scratch/model350000.pt"
 
 sampling:
-  batch_size: 4
-  num_samples: 4
+  batch_size: 8
+  num_samples: 8
   model_path: "log/16bar_v_scratch_zero_lm/ema_0.9999_2700000.pt"

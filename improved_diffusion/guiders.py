@@ -102,8 +102,18 @@ class Guider:
         pass
     def guide(self, x: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
-    def reset(self) -> Optional[torch.Tensor]:
+    def reset(self) -> None:
         return None # return noise as z_T if needed
+
+class NoneGuider(Guider):
+    def __init__(self) -> None:
+        super().__init__()
+    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
+        return x_pred
+    def reset(self) -> None:
+        return super().reset()
+    def __repr__(self) -> str:
+        return ''
 
 class ReconstructGuider(Guider):
     """
@@ -139,10 +149,6 @@ class ReconstructGuider(Guider):
 
         # return the guided x
         guided_x = guided_x_b * self.b_mask + z_a * self.a_mask
-        if self.t==999:
-            print(torch.amax(z_a,dim=(1,2)))
-        if self.t == 0:
-            print(torch.amax(guided_x,dim=(1,2)),torch.amax(z_a,dim=(1,2)),guided_x.shape)
         return guided_x
 
     def reset(self, noise) -> None:
@@ -151,7 +157,7 @@ class ReconstructGuider(Guider):
             self.q_sample_iter = self.q_sample_loop(self.x_a,x_T=noise)
 
     def __repr__(self) -> str:
-        return f'Exact {self.a_mask_string} {self.w_r}'
+        return f'Recons {self.a_mask_string} {self.w_r}'
 
 class ObjectiveGuider(Guider):
     """

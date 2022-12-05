@@ -10,7 +10,7 @@ import torch as th
 import torch.distributed as dist
 import random
 
-from improved_diffusion import dist_util, logger, guiders
+from improved_diffusion import dist_util, guiders
 from improved_diffusion.script_util import get_config, create_model, create_gaussian_diffusion
 
 
@@ -18,61 +18,48 @@ from utils.pianoroll import PianoRoll
 
 def main():
     config, config_override = get_config() # read config yaml at --config
+    dist_util.setup_dist()
     
     conf = config['sampling']
     len_enc= config['encoder']['len_enc']
     len_dec = config['decoder']['len_dec']
     
-    dist_util.setup_dist()
-    logger.configure(tb=True)
-
-    logger.set_level({"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "DISABLE": 50}[config["log_level"]])
-
-    logger.log("")
-    logger.log('-'*30)
-    logger.log('Config:')
-    logger.log(yaml.dump(config_override))
-    logger.log('-'*30)
-    logger.log("")
-
-    logger.log("creating model and diffusion...")
+    '''
+    setup model
+    '''
+    print("creating model and diffusion...")
     model = create_model(config)
-    model.to(dist_util.dev())
     diffusion = create_gaussian_diffusion(config)
-
-    model.load_state_dict(
-        dist_util.load_state_dict(conf["model_path"], map_location="cpu")
-    )
-
-    model.to(dist_util.dev())
-    model.eval()
-    encoder = model['encoder'] if 'encoder' in model else None
-    eps_model = model['eps_model']
-
-    print(eps_model.transformer[0].temporal_attn.fn.relpb.max_distance)
+    model.load_state_dict(dist_util.load_state_dict(conf["model_path"], map_location="cpu"))
+    model.to(dist_util.dev()).eval()
+    encoder,eps_model = model['encoder'] if 'encoder' in model else None, model['eps_model']
     
+    '''
+    setup guider
+    '''
     base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/f.mid')
     x_a = []
     for i in range(conf['batch_size']):
         start_tick = random.randint(0,max(0,base_song.duration//32-8))*32
         #start_tick = 8*32
         x_a.append(base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True).to(dist_util.dev()))
-        print(th.amax(x_a[-1],dim=(0,1)))
     x_a = th.stack(x_a,dim=0)
     mb = guiders.MaskBuilder(x_a[0])
     a_mask = mb.FirstBars(8)
-    print(a_mask.data().sum()/88)
 
-    #guider = guiders.ExactGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
-    guider = guiders.ReconstructGuider(x_a,a_mask,5,None)
+    #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
+    guider = guiders.ReconstructGuider(x_a,a_mask,15,None)
     exp_name = f'{base_song.metadata.name}/{guider}'
 
-    logger.log("sampling...")
+    '''
+    generate samples
+    '''
+    print("sampling...")
     save_path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/',exp_name)
-    all_images = []
-    all_labels = []
+    os.makedirs(save_path, exist_ok=True)
+    all_samples = []
     i=0
-    while len(all_images) < conf['num_samples']:
+    while len(all_samples) < conf['num_samples']:
         model_kwargs = {}
         sample_fn = (
             diffusion.p_sample_loop if not conf['use_ddim'] else diffusion.ddim_sample_loop
@@ -85,29 +72,25 @@ def main():
         # same noise for the whole batch
         noise = th.randn(shape,device=dist_util.dev()).expand(shape)
         guider.reset(noise)
-        sample = sample_fn(
-            eps_model,
-            shape,
+        sample = sample_fn(eps_model,shape,progress=True,
             clip_denoised=conf['clip_denoised'],
             noise = noise,
             model_kwargs=model_kwargs,
             denoised_fn=guider.guide,
-            progress=True,
         )
         for s in sample:
             # save midi
             path = os.path.join(save_path, f"{i}.mid")
             i+=1
-            os.makedirs(save_path, exist_ok=True)
             print('saving',path)
-            PianoRoll.from_tensor((s+1)*64,thres = 20).to_midi(path)
+            PianoRoll.from_tensor((s+1)*64,thres = 10).to_midi(path)
 
-        all_images+=[s for s in sample]
-        logger.log(f"created {len(all_images) } samples")
+        all_samples+=[s for s in sample]
+        print(f"created {len(all_samples) } samples")
 
-    catted = th.cat(all_images,0)
-    PianoRoll.from_tensor((catted+1)*64,thres = 5).to_midi(save_path+"all.mid")
-    logger.log("sampling complete")
+    catted = th.cat(all_samples,0)
+    PianoRoll.from_tensor((catted+1)*64,thres = 5).to_midi(os.path.join(save_path, 'all.mid'))
+    print("sampling complete")
 
 def generate_latent(conf, encoder, length, save_path, suffix = ''):
     '''
