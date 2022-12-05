@@ -51,28 +51,21 @@ def main():
 
     print(eps_model.transformer[0].temporal_attn.fn.relpb.max_distance)
     
-    #base_song = PianoRoll.load('/screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll/0.json').slice(32,32+32*len_dec)
-    base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/5.mid')
-    print('base song:',base_song)
+    base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/f.mid')
     x_a = []
     for i in range(conf['batch_size']):
-        start_tick = random.randint(0,max(0,base_song.duration//32-4))*32
+        start_tick = random.randint(0,max(0,base_song.duration//32-8))*32
         #start_tick = 8*32
-        print(start_tick/32)
         x_a.append(base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True).to(dist_util.dev()))
+        print(th.amax(x_a[-1],dim=(0,1)))
     x_a = th.stack(x_a,dim=0)
-    print(dist_util.dev())
-    a_mask = x_a*0 # who use zeros_like XD
+    mb = guiders.MaskBuilder(x_a[0])
+    a_mask = mb.FirstBars(8)
+    print(a_mask.data().sum()/88)
 
-    
-    a_mask[:,0:32*8] = 1
-    #a_mask[:,:,41:] = a_mask[:,0:32*2,:] = 1
-    #a_mask[:,0:32*4] = a_mask[:,32*-4:] = 1
-
-    x_a *= a_mask #just to be sure the sampling process doesn't peek the groundtruth in case I implemented it wrong.
     #guider = guiders.ExactGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
-    guider = guiders.ExactGuider(x_a,a_mask,10,None)
-    exp_name = '5'
+    guider = guiders.ExactGuider(x_a,a_mask,5,None)
+    exp_name = f'{base_song.metadata.name}/{guider}'
 
     logger.log("sampling...")
     save_path = os.path.join(os.path.dirname(conf["model_path"]),'samples/',os.path.basename(conf["model_path"]).rsplit( ".", 1 )[ 0 ]+'/',exp_name)

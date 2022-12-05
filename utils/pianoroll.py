@@ -165,7 +165,9 @@ class PianoRoll:
         for note in midi.instruments[0].notes:
             note : miditoolkit.Note
             data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity,int(note.end*8/midi.ticks_per_beat)])
-        return PianoRoll(data)
+        pr = PianoRoll(data)
+        pr.set_metadata(name = path.split('/')[-1].split('.mid')[0])
+        return pr
 
     def __init__(self, data : dict):
         # [onset time, pitch, velocity]
@@ -274,7 +276,7 @@ class PianoRoll:
             pitch -= 21 # midi to piano
             if chromagram:
                 pitch = (pitch + 9)%12
-            piano_roll[rel_time,pitch] += vel
+            piano_roll[rel_time,pitch] = vel
 
         if normalized:
             piano_roll = piano_roll/64-1
