@@ -105,7 +105,7 @@ class Guider:
     def reset(self) -> Optional[torch.Tensor]:
         return None # return noise as z_T if needed
 
-class ExactGuider(Guider):
+class ReconstructGuider(Guider):
     """
     Given a existing part of piano roll, generate the other part of the piano roll.
     Can be used for inpanting, outpainting, given prompt, or other arbitary shape of mask.

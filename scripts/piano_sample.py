@@ -64,7 +64,7 @@ def main():
     print(a_mask.data().sum()/88)
 
     #guider = guiders.ExactGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
-    guider = guiders.ExactGuider(x_a,a_mask,5,None)
+    guider = guiders.ReconstructGuider(x_a,a_mask,5,None)
     exp_name = f'{base_song.metadata.name}/{guider}'
 
     logger.log("sampling...")
