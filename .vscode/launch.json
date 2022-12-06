@@ -8,10 +8,10 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "scripts/piano_exp.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": [" --data_dir datasets/mnist $MODEL_FLAGS $DIFFUSION_FLAGS $TRAIN_FLAGS"]
+            "args": ["--config","config/16bar_v_scratch_lm.yaml"]
         }
     ]
 }

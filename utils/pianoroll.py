@@ -137,7 +137,9 @@ class PianoRoll:
         '''
         Load a pianoroll from a json file
         '''
-        return PianoRoll(io_util.json_load(path))
+        pr = PianoRoll(io_util.json_load(path))
+        pr.set_metadata(name = path.split('/')[-1].split('.json')[0])
+        return pr
 
     @ staticmethod
     def from_tensor(tens, thres = 5, normalized = False):
@@ -422,6 +424,13 @@ class PianoRoll:
 
         new_pr.set_metadata(self.metadata.name,self.metadata.start_time + start_time,self.metadata.start_time + end_time)
         return new_pr
+
+    def random_slice(self, length : int = 128) -> PianoRoll:
+        '''
+        Randomly slice a pianoroll with length
+        '''
+        start_time = random.randint(0,(self.duration - length)//32)*32
+        return self.slice(start_time,start_time+length)
 
     def get_random_tensor_clip(self,duration,normalized = False):
         '''

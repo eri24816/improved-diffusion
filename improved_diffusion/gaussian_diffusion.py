@@ -439,7 +439,7 @@ class GaussianDiffusion:
         model_kwargs=None,
         device=None,
         progress=False,
-    ):
+    )->th.Tensor:
         """
         Generate samples from the model.
 

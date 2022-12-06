@@ -133,6 +133,9 @@ class ReconstructGuider(Guider):
 
     def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
         self.t-=1
+        self.x_a = self.x_a.to(z.device)
+        self.a_mask = self.a_mask.to(z.device)
+        self.b_mask = self.b_mask.to(z.device)
         # sample z_a
         if self.q_sample_loop is not None:
             z_a = next(self.q_sample_iter)
@@ -195,7 +198,7 @@ class DirectionGuider(Guider):
         # calculate the grad on z_b
         pass
 
-
+#TODO: Guiders for skyline, baseline, chord
 
 if __name__ == "__main__":
     # test the mask builder

@@ -32,7 +32,7 @@ def pickle_dump(obj, f):
     pickle.dump(obj, open(f, 'wb'))
 
 def json_load(f):
-    return json.load(open(f, 'rb'))
+    return json.load(open(f, 'r'))
 
 def json_dump(obj, f):
-    json.dump(obj, open(f, 'wb'))
+    json.dump(obj, open(f, 'w'))
