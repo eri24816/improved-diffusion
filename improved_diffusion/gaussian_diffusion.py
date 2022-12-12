@@ -337,7 +337,7 @@ class GaussianDiffusion:
                 pred_xstart = pred_xstart.clamp(-1, 1)
             
             if denoised_fn is not None:
-                pred_xstart = denoised_fn(x,pred_xstart,_extract_into_tensor(np.sqrt(self.alphas_cumprod), t, x.shape))
+                pred_xstart = denoised_fn(x,pred_xstart,_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),t/float(self.num_timesteps))
             return pred_xstart
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:

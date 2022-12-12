@@ -5,6 +5,7 @@ numpy array. This can be used to produce samples for FID evaluation.
 
 import itertools
 from math import ceil
+import shutil
 from typing import Iterable, List
 from typing import TypedDict
 import os
@@ -145,44 +146,93 @@ def get_base_songs(path, num_songs=None, num_per_song=1, length = 32*16):
 
     return songs
 
-def exp_guiders():
-    num_samples = 4
-    exp_root_dir = 'log/experiments'
-    exp_name = 'First8'
-    exp_dir = os.path.join(exp_root_dir, exp_name)
-    os.makedirs(exp_dir, exist_ok=True)
-    os.makedirs(os.path.join(exp_dir, 'base_songs'), exist_ok=True)
+class Experiment:
+    def __init__(self, exp_name, config, num_samples = 4, exp_root_dir = 'log/experiments'):
+        exp_dir = os.path.join(exp_root_dir, exp_name)
+        if os.path.exists(exp_dir):
+            ans = input(f'Experiment {exp_name} already exists. Overwrite? (y/n)')
+            if ans == 'y':
+                shutil.rmtree(exp_dir)
+            else:
+                exit(0)
+        os.makedirs(exp_dir,exist_ok=False)
+        os.makedirs(os.path.join(exp_dir, 'base_songs'), exist_ok=True)
+        self.num_samples = num_samples
+        self.exp_root_dir = exp_root_dir
+        self.exp_dir = exp_dir
+        self.exp_name = exp_name
+        self.config = config
+    
+    def get_param_space(self)->ParamSpace:
+        pspace = ParamSpace([
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+        return pspace
 
-    print("creating model and diffusion...")
-    model = create_model(config)
-    model.load_state_dict(dist_util.load_state_dict(config['sampling']["model_path"], map_location="cpu"))
-    diffusion = create_gaussian_diffusion(config)
+    def run_with_params(self, params, model, diffusion):
+        guider = guiders.NoneGuider()
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
-    base_songs = get_base_songs(os.path.join(exp_root_dir,'base_songs'), num_songs=None, num_per_song=1, length = 32*16)
-    for name, bs in base_songs.items():
-        file_name = name+'.mid'
-        file_path = os.path.join(exp_dir, 'base_songs', file_name)
-        print('saving', file_path)
-        PianoRoll.from_tensor(bs,normalized=True,thres = 10).to_midi(file_path)
+    def run(self):
+        print("creating model and diffusion...")
+        model = create_model(config)
+        model.load_state_dict(dist_util.load_state_dict(config['sampling']["model_path"], map_location="cpu"))
+        diffusion = create_gaussian_diffusion(config)
 
-    pspace = ParamSpace([
-        {'name': 'weight', 'value_range': [5,10,15], 'relevant': True},
-        {'name': 'base_song', 'value_range': list(base_songs.keys()), 'relevant': True},
-        {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
-    ])
-    init_metadata(num_samples=num_samples, exp_root_dir=exp_root_dir, exp_name=exp_name, param_space=pspace)
+        pspace = self.get_param_space()
 
-    # interate through all possible combinations of parameters
-    for params in pspace.all_combinations():
-        print('='*20,params ,'='*20,sep='\n')
-        x_a = base_songs[params['base_song']]
+        init_metadata(num_samples=self.num_samples, exp_root_dir=self.exp_root_dir, exp_name=self.exp_name, param_space=pspace)
+
+        # interate through all possible combinations of parameters
+        for params in pspace.all_combinations():
+            print('='*20,params ,'='*20,sep='\n')
+            self.run_with_params(params,model,diffusion)
+
+class ReconstructExperiment(Experiment):
+    def load_base_songs(self):
+        base_songs = get_base_songs(os.path.join(self.exp_root_dir,'base_songs'), num_songs=None, num_per_song=1, length = 32*16)
+        for name, bs in base_songs.items():
+            file_name = name+'.mid'
+            file_path = os.path.join(self.exp_dir, 'base_songs', file_name)
+            print('saving', file_path)
+            PianoRoll.from_tensor(bs,normalized=True,thres = 10).to_midi(file_path)
+        return base_songs
+
+    def get_param_space(self):
+        self.base_songs = self.load_base_songs()
+        return ParamSpace([
+            {'name': 'weight', 'value_range': [1,2,4,8,16], 'relevant': True},
+            {'name': 'base_song', 'value_range': list(self.base_songs.keys()), 'relevant': True},
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+
+    def run_with_params(self, params, model, diffusion):
+        x_a = self.base_songs[params['base_song']]
         mb = guiders.MaskBuilder(x_a)
-        a_mask = mb.FirstBars(8)
+        a_mask = mb.FirstBars(4) + mb.LastBars(4)
         #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
         guider = guiders.ReconstructGuider(x_a,a_mask,params['weight'],None)
-        sample_with_params(num_samples,exp_root_dir,exp_name,params,config,model,diffusion,guider)
-    
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
+
+class ChordExperiment(Experiment):
+    def get_param_space(self) -> ParamSpace:
+        return ParamSpace([
+            {'name': 'weight', 'value_range': [4,8,16], 'relevant': True},
+            {'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
+            {'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
+            {'name': 'chord progression', 'value_range':['Am F C G', 'Am G FM7 Em Am G FM7 (Em E)'], 'relevant': True},
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+    def run_with_params(self, params, model, diffusion):
+        granularity = 16
+        chord_prog = guiders.ChordGuider.generate_chroma_map(params['chord progression'], 32*16, granularity=granularity,num_repeat_interleave=2)
+        guider = guiders.ChordGuider(chord_prog,mask=None,weight= params['weight'],granularity=granularity,cutoff_time_step=params['cutoff_time_step'],objective_clamp=params['objective_clamp'])
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
+        
 
 if __name__ == "__main__":
     dist_util.setup_dist()
-    exp_guiders()
+    ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
+    #ChordExperiment('Chord 16 1210a',config,num_samples=4).run()
+
+# python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml
