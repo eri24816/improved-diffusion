@@ -287,15 +287,16 @@ class ChordGuider(Guider):
         return result
 
     @staticmethod
-    def chord_to_chroma(chord_name:str) -> torch.Tensor:
+    def chord_to_chroma(chord_name:str, semi_shift=0) -> torch.Tensor:
         base_chord = chord_name[0] # C, D, E, F, G, A, B
         base_chord_ord = {'C':0, 'D':2, 'E':4, 'F':5, 'G':7, 'A':9, 'B':11}[base_chord]
-        semi_shift = 0
         is_minor = False
         is_major7 = False
         is_minor7 = False
         is_sus2 = False
         is_sus4 = False
+        is_add2 = False
+        is_add4 = False
         i = 1
         while i < len(chord_name):
             if chord_name[i] == '#':
@@ -316,6 +317,12 @@ class ChordGuider(Guider):
             elif chord_name[i:i+4] == 'sus4':
                 is_sus4 = True
                 i += 3
+            elif chord_name[i:i+4] == 'add2':
+                is_add2 = True
+                i += 3
+            elif chord_name[i:i+4] == 'add4':
+                is_add4 = True
+                i += 3
             else:
                 raise ValueError('Unknown chord name '+chord_name)
             i += 1
@@ -331,6 +338,10 @@ class ChordGuider(Guider):
             chroma[5] = 1
             chroma[3] = 0
             chroma[4] = 0
+        if is_add2:
+            chroma[2] = 1
+        if is_add4:
+            chroma[5] = 1
         if is_major7:
             chroma[11] = 1
         if is_minor7:
