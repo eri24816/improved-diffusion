@@ -217,22 +217,22 @@ class ReconstructExperiment(Experiment):
 class ChordExperiment(Experiment):
     def get_param_space(self) -> ParamSpace:
         return ParamSpace([
-            {'name': 'weight', 'value_range': [4,8,16], 'relevant': True},
+            {'name': 'weight', 'value_range': [8,6], 'relevant': True},
             {'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
             {'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
-            {'name': 'chord progression', 'value_range':['Am F C G', 'Am G FM7 Em Am G FM7 (Em E)'], 'relevant': True},
+            {'name': 'chord progression', 'value_range':['Am Am Em Em Am Am Em E'], 'relevant': True},
             {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
-        granularity = 16
-        chord_prog = guiders.ChordGuider.generate_chroma_map(params['chord progression'], 32*16, granularity=granularity,num_repeat_interleave=2)
+        granularity = 32
+        chord_prog = guiders.ChordGuider.generate_chroma_map(params['chord progression'], 32*16, granularity=granularity,num_repeat_interleave=32//granularity)
         guider = guiders.ChordGuider(chord_prog,mask=None,weight= params['weight'],granularity=granularity,cutoff_time_step=params['cutoff_time_step'],objective_clamp=params['objective_clamp'])
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
         
 
 if __name__ == "__main__":
     dist_util.setup_dist()
-    ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
-    #ChordExperiment('Chord 16 1210a',config,num_samples=4).run()
+    #ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
+    ChordExperiment('Chord a and e',config,num_samples=4).run()
 
 # python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml
