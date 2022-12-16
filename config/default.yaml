@@ -1,5 +1,6 @@
 data_dir: /home/eri24816/pianoroll
 log_level: INFO
+name: ""
 
 diffusion:
   diffusion_steps: 1000

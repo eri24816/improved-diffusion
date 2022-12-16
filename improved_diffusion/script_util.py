@@ -5,6 +5,8 @@ from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
 from .models.transformer import  FFTransformer
 from .models.encoder import Encoder
+import utils.pianoroll as pianoroll
+from . import dist_util
 
 import torch
 
@@ -91,7 +93,15 @@ def merge_configs(default_config, config):
             merge_configs(v, config[k])
     return config
 
-def get_config(path = None):
+def merge_with_command_line_args(config):
+    parser = argparse.ArgumentParser()
+    add_dict_to_argparser(parser, config)
+    args = parser.parse_args()
+
+    config = args_to_dict(args, config.keys())
+    return config
+
+def get_config(path = None, return_path = False):
     default_config = yaml.safe_load(open('config/default.yaml', 'r'))
 
     if path is not None:
@@ -106,4 +116,56 @@ def get_config(path = None):
 
     config = merge_configs(default_config, config_override)
 
-    return config, config_override
+    config = merge_with_command_line_args(config)
+
+    if return_path:
+        return config, config_override, args.config
+    else:
+        return config, config_override
+
+
+def load_data(
+    *, data_dir, batch_size, segment_length = 0, deterministic=False
+):
+    """
+    For a dataset, create a generator over (images, kwargs) pairs.
+
+    Each images is an NCHW float tensor, and the kwargs dict contains zero or
+    more keys, each of which map to a batched Tensor of their own.
+    The kwargs dict can be used for class labels, in which case the key is "y"
+    and the values are integer tensors of class labels.
+
+    :param data_dir: a dataset directory.
+    :param batch_size: the batch size of each returned pair.
+    :param image_size: the size to which images are resized.
+    :param class_cond: if True, include a "y" key in returned dicts for class
+                       label. If classes are not available and this is true, an
+                       exception will be raised.
+    :param deterministic: if True, yield results in a deterministic order.
+    """
+    # if udistributed training, use the distributed data loader
+
+    if not data_dir:
+        raise ValueError("unspecified data directory")
+    
+    if dist_util.USE_DIST:
+        from mpi4py import MPI
+        dataset = pianoroll.PianoRollDataset(
+            data_dir,
+            segment_length,
+            shard=MPI.COMM_WORLD.Get_rank(),
+            num_shards=MPI.COMM_WORLD.Get_size(),
+        )
+    else:
+        dataset = pianoroll.PianoRollDataset(data_dir, segment_length)
+    print(f'Dataset size: {len(dataset)}')
+    if deterministic:
+        loader = pianoroll.DataLoader(
+            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+        )
+    else:
+        loader = pianoroll.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+        )
+    while True:
+        yield from loader

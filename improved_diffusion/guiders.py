@@ -233,7 +233,7 @@ class DirectionGuider(Guider):
         pass
 
 class ChordGuider(Guider):
-    def __init__(self, target_chroma: torch.Tensor, mask:Optional[torch.Tensor]=None, weight = 0.01, granularity=16, cutoff_time_step = -1, objective_clamp = 1, compare_z = False) -> None:
+    def __init__(self, target_chroma: torch.Tensor, mask:Optional[torch.Tensor]=None, weight = 0.01, granularity=16, cutoff_time_step = 0, objective_clamp = 1, compare_z = False) -> None:
         super().__init__()
         self.target_chroma = target_chroma # [segment, chroma]
         self.mask = mask

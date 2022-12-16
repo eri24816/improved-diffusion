@@ -93,3 +93,45 @@ def _find_free_port():
         return s.getsockname()[1]
     finally:
         s.close()
+
+# wrap some torch.distributed functions to make them no-ops if we're not using dist
+
+def all_reduce(*args, **kwargs):
+    if USE_DIST:
+        return dist.all_reduce(*args, **kwargs)
+    return None
+
+def all_gather(*args, **kwargs):
+    if USE_DIST:
+        return dist.all_gather(*args, **kwargs)
+    return None 
+
+def reduce(*args, **kwargs):
+    if USE_DIST:
+        return dist.reduce(*args, **kwargs)
+    return None
+
+def get_rank():
+    if USE_DIST:
+        return dist.get_rank()
+    return 0
+
+def get_world_size():
+    if USE_DIST:
+        return dist.get_world_size()
+    return 1
+
+def barrier():
+    if USE_DIST:
+        return dist.barrier()
+    return None
+
+def broadcast(*args, **kwargs):
+    if USE_DIST:
+        return dist.broadcast(*args, **kwargs)
+    return None
+
+def is_initialized():
+    if USE_DIST:
+        return dist.is_initialized()
+    return False

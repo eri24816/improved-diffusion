@@ -27,7 +27,7 @@ from .resample import LossAwareSampler, UniformSampler
 
 import torchvision
 
-import torch.distributed as dist
+import improved_diffusion.dist_util as dist
 from torch.cuda.amp import autocast, grad_scaler
 
 # For ImageNet experiments, this was a good default value.
@@ -114,7 +114,7 @@ class TrainLoop:
                 copy.deepcopy(self.master_params) for _ in range(len(self.ema_rate))
             ]
 
-        if th.cuda.is_available():
+        if th.cuda.is_available() and dist.get_world_size() > 1:
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,

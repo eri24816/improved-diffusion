@@ -5,47 +5,6 @@ import os
 import random
 from torch.utils.data import DataLoader, Dataset
 
-
-def load_data(
-    *, data_dir, batch_size, segment_length = 0, deterministic=False
-):
-    """
-    For a dataset, create a generator over (images, kwargs) pairs.
-
-    Each images is an NCHW float tensor, and the kwargs dict contains zero or
-    more keys, each of which map to a batched Tensor of their own.
-    The kwargs dict can be used for class labels, in which case the key is "y"
-    and the values are integer tensors of class labels.
-
-    :param data_dir: a dataset directory.
-    :param batch_size: the batch size of each returned pair.
-    :param image_size: the size to which images are resized.
-    :param class_cond: if True, include a "y" key in returned dicts for class
-                       label. If classes are not available and this is true, an
-                       exception will be raised.
-    :param deterministic: if True, yield results in a deterministic order.
-    """
-    from mpi4py import MPI
-    if not data_dir:
-        raise ValueError("unspecified data directory")
-    dataset = PianoRollDataset(
-        data_dir,
-        segment_length,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
-    )
-    print(f'Dataset size: {len(dataset)}')
-    if deterministic:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-        )
-    else:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
-        )
-    while True:
-        yield from loader
-
 from math import inf, ceil
 import torch
 import glob
