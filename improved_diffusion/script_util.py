@@ -116,7 +116,7 @@ def get_config(path = None, return_path = False):
 
     config = merge_configs(default_config, config_override)
 
-    config = merge_with_command_line_args(config)
+    #config = merge_with_command_line_args(config) #TODO add this back in
 
     if return_path:
         return config, config_override, args.config

@@ -268,7 +268,7 @@ class GaussianDiffusion:
             yield x_t
 
     def p_mean_variance(
-        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+        self, model, x, t, clip_denoised=True, guider=None, model_kwargs=None
     ):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
@@ -279,7 +279,7 @@ class GaussianDiffusion:
         :param x: the [N x C x ...] tensor at time t.
         :param t: a 1-D Tensor of timesteps.
         :param clip_denoised: if True, clip the denoised signal into [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
+        :param guider: if not None, a function which applies to the
             x_start prediction before it is used to sample. Applies before
             clip_denoised.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
@@ -295,7 +295,7 @@ class GaussianDiffusion:
 
         B, C = x.shape[:2]
         assert t.shape == (B,)
-        if denoised_fn is not None: # the guider needs grad on x
+        if guider is not None: # the guider needs grad on x
             x = x.detach()
             x.requires_grad = True
         model_output = model(x, self._scale_timesteps(t), **model_kwargs)
@@ -332,12 +332,20 @@ class GaussianDiffusion:
             model_log_variance = _extract_into_tensor(model_log_variance, t, x.shape)
 
         def process_xstart(x,pred_xstart):
-            # Denoised_fn is a guider.
+            # guider is a guider.
             if clip_denoised:
                 pred_xstart = pred_xstart.clamp(-1, 1)
             
-            if denoised_fn is not None:
-                pred_xstart = denoised_fn(x,pred_xstart,_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),t/float(self.num_timesteps))
+            if guider is not None:
+                info = {
+                    'xt':x,
+                    'x0':pred_xstart,
+                    'alpha':_extract_into_tensor(self.alphas_cumprod, t, [x.shape[0]]),
+                    'sqrt_one_minus_cum_alpha':_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),
+                    't':t/float(self.num_timesteps),
+                    'var':model_variance,
+                    }
+                pred_xstart = guider.guide_x0(**info)
             return pred_xstart
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:
@@ -357,6 +365,18 @@ class GaussianDiffusion:
             )
         else:
             raise NotImplementedError(self.model_mean_type)
+        
+        if guider is not None:
+            info = {
+                'xt':x,
+                'mu':model_mean,
+                'x0':pred_xstart,
+                'alpha':_extract_into_tensor(self.alphas_cumprod, t, [x.shape[0]]),
+                'sqrt_one_minus_cum_alpha':_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),
+                't':t/float(self.num_timesteps),
+                'var':model_variance,
+                }
+            model_mean = guider.guide_mu(**info)
 
         assert (
             model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape
@@ -397,7 +417,7 @@ class GaussianDiffusion:
         return t
 
     def p_sample(
-        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+        self, model, x, t, clip_denoised=True, guider=None, model_kwargs=None
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -406,7 +426,7 @@ class GaussianDiffusion:
         :param x: the current tensor at x_{t-1}.
         :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the x_start prediction to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
+        :param guider: if not None, a function which applies to the
             x_start prediction before it is used to sample.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
             pass to the model. This can be used for conditioning.
@@ -419,7 +439,7 @@ class GaussianDiffusion:
             x,
             t,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
         )
         noise = th.randn_like(x)
@@ -435,7 +455,7 @@ class GaussianDiffusion:
         shape,
         noise=None,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         device=None,
         progress=False,
@@ -448,7 +468,7 @@ class GaussianDiffusion:
         :param noise: if specified, the noise from the encoder to sample.
                       Should be of the same shape as `shape`.
         :param clip_denoised: if True, clip x_start predictions to [-1, 1].
-        :param denoised_fn: if not None, a function which applies to the
+        :param guider: if not None, a function which applies to the
             x_start prediction before it is used to sample.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
             pass to the model. This can be used for conditioning.
@@ -463,7 +483,7 @@ class GaussianDiffusion:
             shape,
             noise=noise,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
             device=device,
             progress=progress,
@@ -477,7 +497,7 @@ class GaussianDiffusion:
         shape,
         noise=None,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         device=None,
         progress=False,
@@ -495,7 +515,7 @@ class GaussianDiffusion:
             shape,
             noise=noise,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
             device=device,
             progress=progress,
@@ -511,7 +531,7 @@ class GaussianDiffusion:
         shape,
         noise=None,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         device=None,
         progress=False,
@@ -541,13 +561,13 @@ class GaussianDiffusion:
 
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            with th.no_grad() if denoised_fn is None else nullcontext():
+            with th.no_grad() if guider is None else nullcontext():
                 out = self.p_sample(
                     model,
                     img,
                     t,
                     clip_denoised=clip_denoised,
-                    denoised_fn=denoised_fn,
+                    guider=guider,
                     model_kwargs=model_kwargs,
                 )
                 yield out
@@ -559,7 +579,7 @@ class GaussianDiffusion:
         x,
         t,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         eta=0.0,
     ):
@@ -573,7 +593,7 @@ class GaussianDiffusion:
             x,
             t,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
         )
         # Usually our model outputs epsilon, but we re-derive it
@@ -604,7 +624,7 @@ class GaussianDiffusion:
         x,
         t,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         eta=0.0,
     ):
@@ -617,7 +637,7 @@ class GaussianDiffusion:
             x,
             t,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
         )
         # Usually our model outputs epsilon, but we re-derive it
@@ -642,7 +662,7 @@ class GaussianDiffusion:
         shape,
         noise=None,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         device=None,
         progress=False,
@@ -659,7 +679,7 @@ class GaussianDiffusion:
             shape,
             noise=noise,
             clip_denoised=clip_denoised,
-            denoised_fn=denoised_fn,
+            guider=guider,
             model_kwargs=model_kwargs,
             device=device,
             progress=progress,
@@ -674,7 +694,7 @@ class GaussianDiffusion:
         shape,
         noise=None,
         clip_denoised=True,
-        denoised_fn=None,
+        guider=None,
         model_kwargs=None,
         device=None,
         progress=False,
@@ -709,7 +729,7 @@ class GaussianDiffusion:
                     img,
                     t,
                     clip_denoised=clip_denoised,
-                    denoised_fn=denoised_fn,
+                    guider=guider,
                     model_kwargs=model_kwargs,
                     eta=eta,
                 )

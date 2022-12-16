@@ -100,31 +100,34 @@ class MaskBuilder:
 class Guider:
     def __init__(self) -> None:
         pass
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
-        raise NotImplementedError
+    def guide_x0(self, x0, *args, **kwargs) -> torch.Tensor:
+        return x0
+    def guide_mu(self, mu, *args, **kwargs) -> torch.Tensor:
+        return mu
     def reset(self, *args, **kwargs) -> None:
         return None # return noise as z_T if needed
     def __add__(self, other):
         return CompositeGuider(self, other)
 
 class CompositeGuider(Guider):
-    def __init__(self, guider1: Guider, guider2: Guider) -> None:
+    def __init__(self, *guiders) -> None:
         super().__init__()
-        self.guider1 = guider1
-        self.guider2 = guider2
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
-        return self.guider2.guide(z, self.guider1.guide(z, x_pred, alpha), alpha)
+        self.guiders = guiders
+    def guide_x0(self, x0, *args, **kwargs) -> torch.Tensor:
+        for guider in self.guiders:
+            x0 = guider.guide_x0(x0, *args, **kwargs)
+        return x0
+    def guide_mu(self, mu, *args, **kwargs) -> torch.Tensor:
+        for guider in self.guiders:
+            mu = guider.guide_mu(mu, *args, **kwargs)
+        return mu
     def reset(self, *args, **kwargs) -> None:
-        self.guider1.reset(*args, **kwargs)
-        self.guider2.reset(*args, **kwargs)
+        for guider in self.guiders:
+            guider.reset(*args, **kwargs)
     def __repr__(self) -> str:
-        return f"{self.guider1}+{self.guider2}"
+        return f"CompositeGuider({self.guiders})"
 
 class NoneGuider(Guider):
-    def __init__(self) -> None:
-        super().__init__()
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
-        return x_pred
     def __repr__(self) -> str:
         return ''
 
@@ -144,11 +147,11 @@ class ReconstructGuider(Guider):
         self.q_sample_loop = q_sample_loop
         self.q_sample_iter = None
 
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: torch.Tensor,t) -> torch.Tensor:
+    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha: torch.Tensor,t, *args, **kwargs) -> torch.Tensor:
         self.t-=1
-        self.x_a = self.x_a.to(z.device)
-        self.a_mask = self.a_mask.to(z.device)
-        self.b_mask = self.b_mask.to(z.device)
+        self.x_a = self.x_a.to(xt.device)
+        self.a_mask = self.a_mask.to(xt.device)
+        self.b_mask = self.b_mask.to(xt.device)
         # sample z_a
         if self.q_sample_loop is not None:
             z_a = next(self.q_sample_iter)
@@ -156,14 +159,14 @@ class ReconstructGuider(Guider):
             z_a = self.x_a
 
         # calculate the grad on z_b
-        z.requires_grad = True
-        (((x_pred - self.x_a)**2)*self.a_mask).sum().backward()
-        z_b_grad = z.grad * self.b_mask
+        xt.requires_grad = True
+        (((x0 - self.x_a)**2)*self.a_mask).sum().backward()
+        z_b_grad = xt.grad * self.b_mask
 
-        alpha = alpha.unsqueeze(1).unsqueeze(2).expand_as(x_pred)
+        alpha = alpha.unsqueeze(1).unsqueeze(2).expand_as(x0)
 
         # guide the x_b
-        guided_x_b = x_pred - (self.w_r*alpha/2) * z_b_grad
+        guided_x_b = x0 - (self.w_r*alpha/2) * z_b_grad
 
         # return the guided x
         guided_x = guided_x_b * self.b_mask + z_a * self.a_mask
@@ -186,12 +189,14 @@ class ObjectiveGuider(Guider):
         self.objective = objective
         self.weight = weight
 
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float) -> torch.Tensor:
-        x_pred = x_pred.detach()
-        x_pred.requires_grad = True
-        self.objective(x_pred).backward()
-        guided_x = x_pred - (self.weight*alpha/2) * x_pred.grad
-        x_pred.requires_grad = False
+    def guide_x0(self, info, *args, **kwargs) -> torch.Tensor:
+        x0 = info['x0']
+        alpha = info['alpha']
+        x0 = x0.detach()
+        x0.requires_grad = True
+        self.objective(x0).backward()
+        guided_x = x0 - (self.weight*alpha/2) * x0.grad
+        x0.requires_grad = False
         return guided_x
 
 def guide_with_objective(x, objective, mask,weight = 0.01):
@@ -204,6 +209,13 @@ def guide_with_objective(x, objective, mask,weight = 0.01):
     guided_x = x + mask * x.grad
     #print((mask * weight * x.grad).norm())
     return guided_x.detach()
+
+def get_grad(x, objective):
+    x = x.detach()
+    x.requires_grad = True
+    o = objective(x).sum()
+    o.backward()
+    return x.grad
 
 def cosine_similarity(x:torch.Tensor, target_direction, mask, weight = 0.01):
     return torch.sum((x*target_direction).sum(1,2) / (x.norm()*target_direction.norm()))   
@@ -228,12 +240,12 @@ class DirectionGuider(Guider):
         def objective(x):# cosine similarity
             return (x*self.target).sum() / (x.norm()*self.target.norm()) * self.mask            
 
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, weight: float) -> torch.Tensor:
+    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, weight: float, *args, **kwargs) -> torch.Tensor:
         # calculate the grad on z_b
         pass
 
 class ChordGuider(Guider):
-    def __init__(self, target_chroma: torch.Tensor, mask:Optional[torch.Tensor]=None, weight = 0.01, granularity=16, cutoff_time_step = 0, objective_clamp = 1, compare_z = False) -> None:
+    def __init__(self, target_chroma: torch.Tensor, mask:Optional[torch.Tensor]=None, weight = 0.01, granularity=16, cutoff_time_step = 0, objective_clamp = 1) -> None:
         super().__init__()
         self.target_chroma = target_chroma # [segment, chroma]
         self.mask = mask
@@ -242,16 +254,14 @@ class ChordGuider(Guider):
         self.num_segments = self.target_chroma.shape[0]
         self.cutoff_time_step = cutoff_time_step
         self.objective_clamp = objective_clamp
-        self.compare_z = compare_z
 
-    def guide(self, z: torch.Tensor, x_pred: torch.Tensor, alpha: float,t ) -> torch.Tensor:
-        #weight_schedule = alpha
-        #weight_schedule = t
+    '''
+    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, sqrt_one_minus_cum_alpha: float,t, var,*args, **kwargs ) -> torch.Tensor:
         if self.cutoff_time_step is None:
-            weight_schedule = alpha
+            weight_schedule = sqrt_one_minus_cum_alpha
         else:
             #weight_schedule = ((t-(1.0-self.cutoff_time_step))/self.cutoff_time_step).clamp(0,1)
-            weight_schedule = alpha*(t>self.cutoff_time_step)
+            weight_schedule = sqrt_one_minus_cum_alpha*(t>self.cutoff_time_step)
         def objective(x):# cosine similarity
             # x: [batch, segment * granularity, pitch]
             x=(x+1)/2
@@ -271,19 +281,35 @@ class ChordGuider(Guider):
             cos_sim = cos_sim.clamp(-1,self.objective_clamp)
             return torch.sum(cos_sim,dim=1) # [batch]
         
-        compared = z if self.compare_z else x_pred
-        result = guide_with_objective(compared, objective, self.mask, self.weight*weight_schedule)
-        '''
-        if self.mask is not None:
-            res_chroma = to_chroma((result+1)/2 * self.mask)
-        else:
-            res_chroma = to_chroma((result+1)/2)
-        res_chroma = res_chroma.view(-1,self.num_segments,self.granularity,12)
-        res_chroma = res_chroma.mean(2) # [batch, segment, chroma]
+        result = guide_with_objective(x0, objective, self.mask, self.weight*weight_schedule)
+        return result
+    '''
 
-        cos_sim = (res_chroma*self.target_chroma).sum(2) / (1e-5+res_chroma.norm(dim=2)*self.target_chroma.norm(dim=1))
-        print(1,cos_sim.mean().item())
-        '''
+    def guide_mu(self, xt: torch.Tensor, mu: torch.Tensor, sqrt_one_minus_cum_alpha: float,t, var,*args, **kwargs ) -> torch.Tensor:
+        if self.cutoff_time_step is None:
+            weight_schedule = sqrt_one_minus_cum_alpha
+        else:
+            #weight_schedule = ((t-(1.0-self.cutoff_time_step))/self.cutoff_time_step).clamp(0,1)
+            weight_schedule = sqrt_one_minus_cum_alpha*(t>self.cutoff_time_step)
+        def objective(x):# cosine similarity
+            # x: [batch, segment * granularity, pitch]
+            x=(x+1)/2
+            assert x.shape[1] == self.num_segments*self.granularity
+            self.target_chroma = self.target_chroma.to(x.device)
+            if self.mask is not None:
+                x_chroma = to_chroma(x * self.mask)
+            else:
+                x_chroma = to_chroma(x)
+            x_chroma = x_chroma.view(-1,self.num_segments,self.granularity,12)
+            x_chroma = x_chroma.mean(2) # [batch, segment, chroma]
+            # cosine similarity on chroma dimension
+            cos_sim = (x_chroma*self.target_chroma).sum(2) / (1e-5+x_chroma.norm(dim=2)*self.target_chroma.norm(dim=1))
+            #print(cos_sim)
+            
+            #print(0,cos_sim.mean().item())
+            cos_sim = cos_sim.clamp(-1,self.objective_clamp)
+            return torch.sum(cos_sim,dim=1) # [batch]
+        result = mu + get_grad(xt, objective)*var*self.weight
         return result
 
     @staticmethod

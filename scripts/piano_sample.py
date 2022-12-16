@@ -76,7 +76,7 @@ def main():
             clip_denoised=conf['clip_denoised'],
             noise = noise,
             model_kwargs=model_kwargs,
-            denoised_fn=guider.guide,
+            guider=guider,
         )
         for s in sample:
             # save midi
