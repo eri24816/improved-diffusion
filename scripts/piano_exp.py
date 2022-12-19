@@ -220,7 +220,7 @@ class ChordExperiment(Experiment):
             {'name': 'weight', 'value_range': [1.4,1.8,2.2,1], 'relevant': True},
             {'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
             {'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
-            {'name': 'chord progression', 'value_range':['Am Em F C Dm Am Bb E', 'A F C G'], 'relevant': True},
+            {'name': 'chord progression', 'value_range':['Am Em F C Dm Am Bb E', 'Am F C G'], 'relevant': True},
             {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
@@ -243,7 +243,7 @@ class ScratchExperiment(Experiment):
 if __name__ == "__main__":
     dist_util.setup_dist()
     #ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
-    ChordExperiment('Chord_new',config,num_samples=4).run()
+    ChordExperiment('test',config,num_samples=4).run()
     #ScratchExperiment('test',config,num_samples=4).run()
 
 # python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml
