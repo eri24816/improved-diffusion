@@ -340,13 +340,14 @@ class GaussianDiffusion:
                 info = {
                     'xt':x,
                     'x0':pred_xstart,
-                    'alpha':_extract_into_tensor(self.alphas_cumprod, t, [x.shape[0]]),
-                    'sqrt_one_minus_cum_alpha':_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),
+                    'alpha':_extract_into_tensor(self.alphas, t, x.shape),
+                    'alpha_bar':_extract_into_tensor(self.alphas_cumprod, t, x.shape),
+                    'beta':_extract_into_tensor(self.betas, t, x.shape),
                     't':t/float(self.num_timesteps),
                     'var':model_variance,
                     }
                 pred_xstart = guider.guide_x0(**info)
-            return pred_xstart
+            return pred_xstart.detach()
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:
             pred_xstart = process_xstart(x,
@@ -371,12 +372,13 @@ class GaussianDiffusion:
                 'xt':x,
                 'mu':model_mean,
                 'x0':pred_xstart,
-                'alpha':_extract_into_tensor(self.alphas_cumprod, t, [x.shape[0]]),
-                'sqrt_one_minus_cum_alpha':_extract_into_tensor(np.sqrt(1-self.alphas_cumprod), t, [x.shape[0]]),
+                'alpha':_extract_into_tensor(self.alphas, t, x.shape),
+                'alpha_bar':_extract_into_tensor(self.alphas_cumprod, t, x.shape),
+                'beta':_extract_into_tensor(self.betas, t, x.shape),
                 't':t/float(self.num_timesteps),
                 'var':model_variance,
                 }
-            model_mean = guider.guide_mu(**info)
+            model_mean = guider.guide_mu(**info).detach()
 
         assert (
             model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape
@@ -723,7 +725,7 @@ class GaussianDiffusion:
 
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            with th.no_grad():
+            with th.no_grad() if guider is None else nullcontext():
                 out = self.ddim_sample(
                     model,
                     img,

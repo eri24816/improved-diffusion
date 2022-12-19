@@ -1,6 +1,18 @@
 from typing import List, Optional, Union
 import torch
 import re
+
+from torch.autograd import grad
+
+def nth_derivative(f, wrt, n):
+
+    for i in range(n):
+
+        grads = grad(f, wrt, create_graph=True)[0]
+        f = grads.sum()
+
+    return grads
+
 class Mask:
     def __init__(self, data:torch.Tensor, name:str):
         self._data = data.bool()
@@ -255,22 +267,85 @@ class ChordGuider(Guider):
         self.cutoff_time_step = cutoff_time_step
         self.objective_clamp = objective_clamp
 
-    '''
-    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, sqrt_one_minus_cum_alpha: float,t, var,*args, **kwargs ) -> torch.Tensor:
-        if self.cutoff_time_step is None:
-            weight_schedule = sqrt_one_minus_cum_alpha
-        else:
-            #weight_schedule = ((t-(1.0-self.cutoff_time_step))/self.cutoff_time_step).clamp(0,1)
-            weight_schedule = sqrt_one_minus_cum_alpha*(t>self.cutoff_time_step)
+    
+    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: float,t, var,beta,*args, **kwargs ) -> torch.Tensor:
+        
+        if self.mask is  None:
+            self.mask = torch.ones_like(x0)
         def objective(x):# cosine similarity
             # x: [batch, segment * granularity, pitch]
             x=(x+1)/2
             assert x.shape[1] == self.num_segments*self.granularity
             self.target_chroma = self.target_chroma.to(x.device)
-            if self.mask is not None:
-                x_chroma = to_chroma(x * self.mask)
-            else:
-                x_chroma = to_chroma(x)
+            
+            x_chroma = to_chroma(x * self.mask)
+            x_chroma = x_chroma.view(-1,self.num_segments,self.granularity,12)
+            x_chroma = x_chroma.mean(2) # [batch, segment, chroma]
+            # cosine similarity on chroma dimension
+            cos_sim = (x_chroma*self.target_chroma).sum(2) / (1e-5+x_chroma.norm(dim=2)*self.target_chroma.norm(dim=1))
+            #print(cos_sim)
+            
+            #print(0,cos_sim.mean().item())
+            cos_sim = cos_sim.clamp(-1,self.objective_clamp)
+            return torch.sum(cos_sim) # [batch]
+        
+        # constants
+        sab = alpha_bar**0.5
+        s1ab = (1-alpha_bar)**0.5
+
+        # calculate grad_xt_mu
+        grad_xt_mu = nth_derivative(x0.sum(),xt,1)
+        xt = xt.detach()
+
+        # calculate eps and mu_x0 (mu_x0 is identical to the variable x0, but I calculate it back from eps like the formula)
+        eps = (xt-sab*x0.detach())/(s1ab)
+        mu_x0 = (xt - s1ab*eps)/(sab)
+
+        # calculate var_x0
+        var_x0_prior = 0.1070
+        var_x0 = ((1/alpha_bar-1)*var_x0_prior)/((1/alpha_bar-1)+var_x0_prior)
+
+        # calculate g and h
+        mu_x0_ = mu_x0.detach()
+        mu_x0_.requires_grad = True
+        g = nth_derivative(objective(mu_x0_), mu_x0_, n=1)
+        h = nth_derivative(objective(mu_x0_), mu_x0_, n=2)
+        h = h.clamp(max=0) # must be negative to avoid nan
+        '''
+        expected_objective = torch.sum((-mu_x0**2)/(2*var_x0) + (-mu_x0**2/var_x0 - 2*(g-h*mu_x0_)*mu_x0)/(2*h*var_x0-2))
+        expected_objective.backward()
+        guiding_force_ = xt.grad
+        '''
+
+        # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} * grad_{mu_{x_0}} E[f(x_t)]
+        guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
+
+        # eps_guided = eps - w * sqrt(1-a_bar) * grad_{x_t} f(x_t)
+        # from Diffusion Beats GANs
+        guided_eps = eps - s1ab * guiding_force * self.weight
+
+        guided_x0 = (xt - s1ab*guided_eps)/(sab)
+
+        print(h.mean().item(),var_x0.mean().item(),grad_xt_mu.mean().item(),((guiding_force**2).sum()**0.5).item(),sep='\t')
+        
+        return guided_x0
+
+    def guide_x0_old(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: float,t, var,*args, **kwargs ) -> torch.Tensor:
+        weight_schedule = (1-alpha_bar)/(alpha_bar**0.5)*(1-t.unsqueeze(1).unsqueeze(2).expand_as(alpha_bar))
+        if self.cutoff_time_step is not None:
+            #weight_schedule = ((t-(1.0-self.cutoff_time_step))/self.cutoff_time_step).clamp(0,1)
+            #weight_schedule = ((1-alpha_bar)**0.5)*(t>self.cutoff_time_step)
+            weight_schedule*=(t>self.cutoff_time_step).unsqueeze(1).unsqueeze(2).expand_as(weight_schedule)
+        print(t.mean().item(),alpha_bar.mean().item(),(1-alpha_bar).mean().item(),weight_schedule.mean().item(),sep='\t')
+        if self.mask is  None:
+                self.mask = torch.ones_like(x0)
+        def objective(x):# cosine similarity
+            # x: [batch, segment * granularity, pitch]
+            x=(x+1)/2
+            assert x.shape[1] == self.num_segments*self.granularity
+            self.target_chroma = self.target_chroma.to(x.device)
+            
+            x_chroma = to_chroma(x * self.mask)
             x_chroma = x_chroma.view(-1,self.num_segments,self.granularity,12)
             x_chroma = x_chroma.mean(2) # [batch, segment, chroma]
             # cosine similarity on chroma dimension
@@ -281,10 +356,10 @@ class ChordGuider(Guider):
             cos_sim = cos_sim.clamp(-1,self.objective_clamp)
             return torch.sum(cos_sim,dim=1) # [batch]
         
-        result = guide_with_objective(x0, objective, self.mask, self.weight*weight_schedule)
+        result = guide_with_objective(x0, objective, self.mask*self.weight*weight_schedule, 1)
         return result
+    
     '''
-
     def guide_mu(self, xt: torch.Tensor, mu: torch.Tensor, sqrt_one_minus_cum_alpha: float,t, var,*args, **kwargs ) -> torch.Tensor:
         if self.cutoff_time_step is None:
             weight_schedule = sqrt_one_minus_cum_alpha
@@ -311,7 +386,7 @@ class ChordGuider(Guider):
             return torch.sum(cos_sim,dim=1) # [batch]
         result = mu + get_grad(xt, objective)*var*self.weight
         return result
-
+    '''
     @staticmethod
     def chord_to_chroma(chord_name:str, semi_shift=0) -> torch.Tensor:
         base_chord = chord_name[0] # C, D, E, F, G, A, B
