@@ -49,13 +49,14 @@ def init_metadata(num_samples,exp_root_dir, exp_name,param_space:ParamSpace):
     }
     json_dump(metadata, os.path.join(exp_dir, "metadata.json"))
 
-def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, model, diffusion:gaussian_diffusion.GaussianDiffusion, guider):
+def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, model, diffusion:gaussian_diffusion.GaussianDiffusion, guider: guiders.Guider):
     
     conf = config['sampling']
     len_dec = config['decoder']['len_dec']
     
     model.to(dist_util.dev()).eval()
     encoder,eps_model = model['encoder'] if 'encoder' in model else None, model['eps_model']
+    guider.set_diffusion(diffusion)
 
     params = params.copy()
 
@@ -74,19 +75,27 @@ def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, 
             model_kwargs["condition"] = generate_latent(conf, encoder, len_dec*32, exp_dir)
 
         # same noise for the whole batch
-        noise = th.randn(shape,device=dist_util.dev()).expand(shape)
+        min_timestep, max_timestep, noise = guider.get_timestep_range_and_noise()
+        if noise is None:
+            noise = th.randn(shape,device=dist_util.dev()).expand(shape)
+        else:
+            noise = noise.unsqueeze(0).expand(shape).to(dist_util.dev())
         guider.reset(noise)
+
         sample = sample_fn(eps_model,shape,progress=True,
             clip_denoised=conf['clip_denoised'],
             noise = noise,
             model_kwargs=model_kwargs,
             guider=guider,
+            min_timestep=min_timestep,
+            max_timestep=max_timestep,
         )
         
         metadata = json_load(os.path.join(exp_dir, "metadata.json"))
         for s in sample:
             params['sample_idx'], sample_idx = sample_idx, sample_idx+1
             file_name = str(tuple(params.values()))+'.mid'
+            file_name = file_name.replace('/','_')
             file_path = os.path.join(exp_dir, file_name)
             print('saving', file_path)
             PianoRoll.from_tensor(s,normalized=True,thres = 10).to_midi(file_path)
@@ -156,7 +165,6 @@ class Experiment:
             else:
                 exit(0)
         os.makedirs(exp_dir,exist_ok=False)
-        os.makedirs(os.path.join(exp_dir, 'base_songs'), exist_ok=True)
         self.num_samples = num_samples
         self.exp_root_dir = exp_root_dir
         self.exp_dir = exp_dir
@@ -217,10 +225,10 @@ class ReconstructExperiment(Experiment):
 class ChordExperiment(Experiment):
     def get_param_space(self) -> ParamSpace:
         return ParamSpace([
-            {'name': 'weight', 'value_range': [1.4,1.8,2.2,1], 'relevant': True},
+            {'name': 'weight', 'value_range': [4,6,8], 'relevant': True},
             {'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
             {'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
-            {'name': 'chord progression', 'value_range':['Am Em F C Dm Am Bb E', 'Am F C G'], 'relevant': True},
+            {'name': 'chord progression', 'value_range':['C G Am Em F C F G', 'Am F C G'], 'relevant': True},
             {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
@@ -238,12 +246,26 @@ class ScratchExperiment(Experiment):
     def run_with_params(self, params, model, diffusion):
         guider = guiders.NoneGuider()
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
-        
+
+class StrokeExperiment(Experiment):
+    def get_param_space(self) -> ParamSpace:
+        return ParamSpace([
+            {'name': 'weight', 'value_range': [4,6,8], 'relevant': True},
+            #{'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
+            #{'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
+            {'name': 'image_file', 'value_range':['log/experiments/data/stroke3.png','log/experiments/data/stroke2.png','log/experiments/data/stroke1.png'], 'relevant': True},
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+    def run_with_params(self, params, model, diffusion):
+        guider = guiders.StrokeGuider(params['weight'],(config['decoder']['len_dec']*32,88))
+        guider.load_image(params['image_file'])
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
 if __name__ == "__main__":
     dist_util.setup_dist()
     #ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
-    ChordExperiment('test',config,num_samples=4).run()
+    ChordExperiment('Chord_new',config,num_samples=4).run()
     #ScratchExperiment('test',config,num_samples=4).run()
+    #StrokeExperiment('Stroke',config,num_samples=4).run()
 
 # python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml

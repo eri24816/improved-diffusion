@@ -1,5 +1,6 @@
 from typing import List, Optional, Union
 import torch
+import torchvision, torch.nn.functional
 import re
 
 from torch.autograd import grad
@@ -111,15 +112,23 @@ class MaskBuilder:
 
 class Guider:
     def __init__(self) -> None:
-        pass
+        self.diffusion = None
     def guide_x0(self, x0, *args, **kwargs) -> torch.Tensor:
         return x0
     def guide_mu(self, mu, *args, **kwargs) -> torch.Tensor:
         return mu
     def reset(self, *args, **kwargs) -> None:
         return None # return noise as z_T if needed
+    def get_timestep_range_and_noise(self):
+        '''
+        Returns (min_t, max_t, noise)
+        '''
+        return 0, None, None
     def __add__(self, other):
         return CompositeGuider(self, other)
+
+    def set_diffusion(self, diffusion):
+        self.diffusion = diffusion
 
 class CompositeGuider(Guider):
     def __init__(self, *guiders) -> None:
@@ -246,6 +255,10 @@ class ObjectiveGuider(Guider):
         self.objective = objective
         self.weight = weight
 
+        self.h_mean_rec = []
+        self.h_std_rec = []
+        self.factor_rec = []
+
     def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: float,t, var,beta,*args, **kwargs ) -> torch.Tensor:
 
         # constants
@@ -269,8 +282,14 @@ class ObjectiveGuider(Guider):
         mu_x0_.requires_grad = True
         g = nth_derivative(self.objective(mu_x0_), mu_x0_, n=1)
         h = nth_derivative(self.objective(mu_x0_), mu_x0_, n=2)
-        h = h.clamp(max=0) # must be negative to avoid nan
-
+        h = h.clamp(max=-0.001) # must be negative to avoid nan
+        h_nan = torch.isnan(h)
+        h[h_nan] = -1000
+        '''
+        log_h = torch.log(-h)
+        self.h_mean_rec += [log_h.mean().item()]
+        self.h_std_rec += [log_h.std().item()]
+        '''
         # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} * grad_{mu_{x_0}} E[f(x_t)]
         guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
 
@@ -281,8 +300,28 @@ class ObjectiveGuider(Guider):
         guided_x0 = (xt - s1ab*guided_eps)/(sab)
 
         #print(h.mean().item(),var_x0.mean().item(),grad_xt_mu.mean().item(),((guiding_force**2).sum()**0.5).item(),sep='\t')
+
+        self.factor_rec += [s1ab * grad_xt_mu * (1/(1-h*var_x0))]
+        
+        if len(self.h_mean_rec) == 1000:
+            import matplotlib.pyplot as plt
+            # clear
+            plt.clf()
+            # plot
+            plt.plot(self.h_mean_rec)
+            plt.plot(self.h_std_rec)
+            plt.plot(self.factor_rec)
+            # save
+            plt.savefig(f'legacy/temp/h_mean_std{torch.randint(0,1000,[1]).item()}.png')
         
         return guided_x0
+
+    def reset(self, *args, **kwargs) -> None:
+        self.h_mean_rec = []
+        self.h_std_rec = []
+        self.factor_rec = []
+        return super().reset(*args, **kwargs)
+
 
 class ChordGuider(Guider):
     def __init__(self, target_chroma: torch.Tensor, mask:Optional[torch.Tensor]=None, weight = 0.01, granularity=16, cutoff_time_step = 0, objective_clamp = 1) -> None:
@@ -315,7 +354,7 @@ class ChordGuider(Guider):
         return torch.sum(cos_sim) # [batch]
     
     def guide_x0(self,*args, **kwargs) -> torch.Tensor:
-        guided_x0 = ObjectiveGuider(self.objective).guide_x0(*args, **kwargs)
+        guided_x0 = self.objective_guider.guide_x0(*args, **kwargs)
         return guided_x0
     
     @staticmethod
@@ -410,7 +449,68 @@ class ChordGuider(Guider):
         chroma_map = torch.stack(chroma_map,dim=0)
         return chroma_map
 
+class StrokeGuider(Guider):
+    def __init__(self, weight, shape, blur=1, start_timestep = None, density_tolerance=0) -> None:
+        super().__init__()
+        self.objective_guider = ObjectiveGuider(self.objective, weight=weight)
+        self.img = None
+        self.shape = shape
+        self.blur = blur
 
+        # 15*15 gaussian kernel
+        x,y = torch.meshgrid(torch.linspace(-11,11,23),torch.linspace(-4,4,9))
+        self.gaussian_kernel = torch.exp(-(x**2/10+y**2)/2/15).float()
+        self.gaussian_kernel = self.gaussian_kernel / torch.sum(self.gaussian_kernel)
+
+        self.threshold = 0.3
+        self.save_img = False
+        self.start_timestep = start_timestep
+
+    def load_image(self,path):
+        raw_img = torchvision.io.read_image(path).float()
+        transform = torchvision.transforms.Compose([
+            torchvision.transforms.Lambda(lambda x: x.permute(0,2,1)),
+            torchvision.transforms.Resize(self.shape),
+            torchvision.transforms.Grayscale(),
+            torchvision.transforms.Lambda(lambda x: x.flip(2)),
+            torchvision.transforms.GaussianBlur(int((self.blur*5)/2)*2+1, sigma=(self.blur, self.blur)),
+            torchvision.transforms.Lambda(lambda x: x[0]/256),
+        ])
+        self.img = transform(raw_img)*0.05
+    
+    def objective(self,x):
+        self.img = self.img.to(x.device)
+        self.gaussian_kernel = self.gaussian_kernel.to(x.device)
+        x = ((x+1)/2).clamp(0,self.threshold)/self.threshold
+        x = torch.nn.functional.conv2d(x.unsqueeze(1),self.gaussian_kernel.unsqueeze(0).unsqueeze(0),padding=(self.gaussian_kernel.shape[0]//2,self.gaussian_kernel.shape[1]//2)).squeeze(1)
+
+        if self.save_img is not False:
+            import matplotlib.pyplot as plt
+            fname = f'legacy/temp/{self.save_img}.png'
+            plt.imsave(fname, torch.cat([x[0].detach(),self.img.detach()],dim=1).cpu().numpy())
+            self.save_img = False
+        
+        return -torch.sum((x-self.img)**2)
+
+    def guide_x0(self,t,*args, **kwargs) -> torch.Tensor:
+        if int(t.mean()*1000)%100==0:
+            self.save_img = int(t.mean()*1000)
+        else:
+            self.save_img = False
+        guided_x0 = self.objective_guider.guide_x0(*args,t=t, **kwargs)
+        return guided_x0
+
+    def get_timestep_range_and_noise(self):
+        if self.start_timestep is None:
+            return super().get_timestep_range_and_noise()
+        min_timestep = 0
+        max_timestep = self.start_timestep
+        noise = self.diffusion.q_sample((self.img*2-1),torch.ones([self.img.shape[0],self.img.shape[1]],dtype=torch.long)* max_timestep)
+        fname = f'legacy/temp/start.png'
+        import matplotlib.pyplot as plt
+        plt.imsave(fname, noise.cpu().numpy())
+
+        return min_timestep, max_timestep, noise
 
 #TODO: Guiders for skyline, baseline, chord
 
