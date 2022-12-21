@@ -263,8 +263,10 @@ class StrokeExperiment(Experiment):
 
 if __name__ == "__main__":
     dist_util.setup_dist()
+    shutil.rmtree('legacy/temp/',ignore_errors=True)
+    os.makedirs('legacy/temp/',exist_ok=True)
     #ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
-    ChordExperiment('Chord_new',config,num_samples=4).run()
+    ChordExperiment('test',config,num_samples=4).run()
     #ScratchExperiment('test',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
 

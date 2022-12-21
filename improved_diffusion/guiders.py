@@ -4,6 +4,7 @@ import torchvision, torch.nn.functional
 import re
 
 from torch.autograd import grad
+import matplotlib.pyplot as plt
 
 def nth_derivative(f, wrt, n):
 
@@ -13,6 +14,55 @@ def nth_derivative(f, wrt, n):
         f = grads.sum()
 
     return grads
+
+class Plotter:
+    def __init__(self, save_path='') -> None:
+        self.reset()
+        self.save_path = save_path
+    def reset(self):
+        self.lines={}
+        self.fig = None
+        self.ax = None
+
+    def record(self, name, value, reduce='mean', log_scale=False):
+        if name not in self.lines:
+            self.lines[name] = []
+        if isinstance(value, torch.Tensor):
+            if reduce == 'mean':
+                value = value.mean()
+            elif reduce == 'sum':
+                value = value.sum()
+            elif reduce == 'max':
+                value = value.max()
+            elif reduce == 'min':
+                value = value.min()
+            elif reduce == 'std':
+                value = value.std()
+            elif reduce == 'var':
+                value = value.var()
+            elif reduce == 'rms':
+                value = value.pow(2).mean().sqrt()
+            elif reduce == 'norm':
+                value = value.norm()
+            if log_scale:
+                value = torch.log10(value)
+        self.lines[name].append(value.item())
+    def plot(self, names=None, ax=None, fig=None, **kwargs):
+        if ax is None:
+            if self.ax is None:
+                self.fig, self.ax = plt.subplots()
+            ax = self.ax
+        if fig is None:
+            fig = self.fig
+        if names is None:
+            names = self.lines.keys()
+        for name in names:
+            ax.plot(self.lines[name], label=name, **kwargs)
+        ax.legend()
+        if self.save_path:
+            fig.savefig(self.save_path.replace('#',str(torch.randint(0,1000,[1]).item())))
+        return fig, ax
+        
 
 class Mask:
     def __init__(self, data:torch.Tensor, name:str):
@@ -255,19 +305,13 @@ class ObjectiveGuider(Guider):
         self.objective = objective
         self.weight = weight
 
-        self.h_mean_rec = []
-        self.h_std_rec = []
-        self.factor_rec = []
+        self.plotter = Plotter('legacy/temp/h_mean_std#.png')
 
     def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: float,t, var,beta,*args, **kwargs ) -> torch.Tensor:
 
         # constants
         sab = alpha_bar**0.5
         s1ab = (1-alpha_bar)**0.5
-
-        # calculate grad_xt_mu
-        grad_xt_mu = nth_derivative(x0.sum(),xt,1)
-        xt = xt.detach()
 
         # calculate eps and mu_x0 (mu_x0 is identical to the variable x0, but I calculate it back from eps like the formula)
         eps = (xt-sab*x0.detach())/(s1ab)
@@ -284,14 +328,13 @@ class ObjectiveGuider(Guider):
         h = nth_derivative(self.objective(mu_x0_), mu_x0_, n=2)
         h = h.clamp(max=-0.001) # must be negative to avoid nan
         h_nan = torch.isnan(h)
-        h[h_nan] = -1000
-        '''
-        log_h = torch.log(-h)
-        self.h_mean_rec += [log_h.mean().item()]
-        self.h_std_rec += [log_h.std().item()]
-        '''
-        # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} * grad_{mu_{x_0}} E[f(x_t)]
-        guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
+        h[h_nan] = -1e8
+
+        # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} @ grad_{mu_{x_0}} E[f(x_t)]
+        #guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
+        x0.backward((1/(1-h*var_x0)) * g)
+        guiding_force = xt.grad
+        xt = xt.detach()
 
         # eps_guided = eps - w * sqrt(1-a_bar) * grad_{x_t} f(x_t)
         # from Diffusion Beats GANs
@@ -299,27 +342,26 @@ class ObjectiveGuider(Guider):
 
         guided_x0 = (xt - s1ab*guided_eps)/(sab)
 
+        self.plotter.record('grad_mu',(1/(1-h*var_x0)) * g, 'rms',True)
+        self.plotter.record('-h',-h, 'mean',True)
+        self.plotter.record('g',g, 'rms',True)
+        self.plotter.record('guiding_force',guiding_force, 'rms',True)
+        self.plotter.record('s1ab',s1ab, 'mean',True)
+        self.plotter.record('x0 std 0',x0[0], 'std',True)
+        self.plotter.record('x0 std 1',x0[1], 'std',True)
+        self.plotter.record('x0 std 2',x0[2], 'std',True)
+        self.plotter.record('x0 std 3',x0[3], 'std',True)
+
+        if int(t.mean().item()*1000) == 0:
+            self.plotter.plot()
+            #print('h_mean\th_std\tgrad_mu_rms\tguiding_force_rms\ts1ab_mean',sep='\t')
+
         #print(h.mean().item(),var_x0.mean().item(),grad_xt_mu.mean().item(),((guiding_force**2).sum()**0.5).item(),sep='\t')
 
-        self.factor_rec += [s1ab * grad_xt_mu * (1/(1-h*var_x0))]
-        
-        if len(self.h_mean_rec) == 1000:
-            import matplotlib.pyplot as plt
-            # clear
-            plt.clf()
-            # plot
-            plt.plot(self.h_mean_rec)
-            plt.plot(self.h_std_rec)
-            plt.plot(self.factor_rec)
-            # save
-            plt.savefig(f'legacy/temp/h_mean_std{torch.randint(0,1000,[1]).item()}.png')
-        
         return guided_x0
 
     def reset(self, *args, **kwargs) -> None:
-        self.h_mean_rec = []
-        self.h_std_rec = []
-        self.factor_rec = []
+        self.plotter.reset()
         return super().reset(*args, **kwargs)
 
 
