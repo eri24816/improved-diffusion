@@ -328,13 +328,12 @@ class GaussianDiffusion:
                     self.posterior_log_variance_clipped,
                 ),
             }[self.model_var_type]
+            
             model_variance = _extract_into_tensor(model_variance, t, x.shape)
             model_log_variance = _extract_into_tensor(model_log_variance, t, x.shape)
 
         def process_xstart(x,pred_xstart):
             # guider is a guider.
-            if clip_denoised:
-                pred_xstart = pred_xstart.clamp(-1, 1)
             
             if guider is not None:
                 info = {
@@ -347,6 +346,9 @@ class GaussianDiffusion:
                     'var':model_variance,
                     }
                 pred_xstart = guider.guide_x0(**info)
+
+            if clip_denoised:
+                pred_xstart = pred_xstart.clamp(-1, 1)
             return pred_xstart.detach()
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:
@@ -356,6 +358,7 @@ class GaussianDiffusion:
             model_mean = model_output
         elif self.model_mean_type in [ModelMeanType.START_X, ModelMeanType.EPSILON]:
             if self.model_mean_type == ModelMeanType.START_X:
+                pred_xstart_with_grad = model_output
                 pred_xstart = process_xstart(x,model_output)
             else:
                 pred_xstart = process_xstart(x,
@@ -371,7 +374,7 @@ class GaussianDiffusion:
             info = {
                 'xt':x,
                 'mu':model_mean,
-                'x0':pred_xstart,
+                'x0':pred_xstart_with_grad,
                 'alpha':_extract_into_tensor(self.alphas, t, x.shape),
                 'alpha_bar':_extract_into_tensor(self.alphas_cumprod, t, x.shape),
                 'beta':_extract_into_tensor(self.betas, t, x.shape),

@@ -225,17 +225,22 @@ class ReconstructExperiment(Experiment):
 class ChordExperiment(Experiment):
     def get_param_space(self) -> ParamSpace:
         return ParamSpace([
-            {'name': 'weight', 'value_range': [4,6,8], 'relevant': True},
-            {'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
-            {'name': 'objective_clamp', 'value_range': [0.8,0.9,1], 'relevant': True},
-            {'name': 'chord progression', 'value_range':['C G Am Em F C F G', 'Am F C G'], 'relevant': True},
+            {'name': 'weight', 'value_range': [4,6,8,10], 'relevant': True},
+            #{'name': 'cutoff_time_step', 'value_range': [0], 'relevant': True},
+            #{'name': 'objective_clamp', 'value_range': [1], 'relevant': True},
+            {'name': 'gamma', 'value_range': [0.5,1,2], 'relevant': True},
+            {'name': 'chord progression', 'value_range':['F G Am Em', 'Am F C G', 'F G Em Am Dm G C C7', 'C G Am Em F C F G'], 'relevant': True},
             {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
         granularity = 32
-        chord_prog = guiders.ChordGuider.generate_chroma_map(params['chord progression'], 32*16, granularity=granularity,num_repeat_interleave=32//granularity)
-        guider = guiders.ChordGuider(chord_prog,mask=None,weight= params['weight'],granularity=granularity,cutoff_time_step=params['cutoff_time_step'],objective_clamp=params['objective_clamp'])
-        #guider = guiders.NoneGuider()
+        guider = guiders.ChordGuider(
+            params['chord progression'],mask=None,weight= params['weight'],num_repeat_interleave=32//granularity,
+            granularity=granularity,num_segments=16*32//granularity,
+            #cutoff_time_step=params['cutoff_time_step'],objective_clamp=params['objective_clamp'],
+            use_ddim=config['sampling']['use_ddim'],gamma=params['gamma']
+        )
+        guider.objective_guider.plotter.set_title(str(list(params.values()))) 
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
 class ScratchExperiment(Experiment):

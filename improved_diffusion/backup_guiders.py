@@ -6,7 +6,6 @@ import re
 from torch.autograd import grad
 import matplotlib.pyplot as plt
 import einops
-from improved_diffusion.gaussian_diffusion import GaussianDiffusion
 
 from utils import music
 
@@ -18,18 +17,6 @@ def nth_derivative(f, wrt, n):
         f = grads.sum()
 
     return grads
-
-def pr2img(pr,path):
-    pr = pr.detach().cpu()
-    pr = einops.rearrange(pr,'t p -> p t')
-    pr = (pr+1)/2
-    pr = pr.flip(0)
-    # use plt to save
-    plt.figure(figsize=(10,10))
-    plt.imshow(pr,vmin=0,vmax=1)
-    #plt.colorbar()
-    plt.savefig(path)
-    plt.close()
 
 class Plotter:
     def __init__(self, save_path='') -> None:
@@ -198,7 +185,7 @@ class Guider:
     def __add__(self, other):
         return CompositeGuider(self, other)
 
-    def set_diffusion(self, diffusion: GaussianDiffusion):
+    def set_diffusion(self, diffusion):
         self.diffusion = diffusion
 
 class CompositeGuider(Guider):
@@ -329,23 +316,23 @@ class ObjectiveGuider(Guider):
     '''
     Guide the sampling direction with a objective function.
     '''
-    def __init__(self,objective,weight=1.,use_ddim=False) -> None:
+    def __init__(self,objective,weight=1.) -> None:
         super().__init__()
         self.objective = objective
         self.weight = weight
 
         self.plotter = Plotter('legacy/temp/h_mean_std#.png')
-        self.use_ddim = use_ddim # x0 or mu
 
     def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: float,t, var,beta,*args, **kwargs ) -> torch.Tensor:
-        if not self.use_ddim:
-            return x0
+
         # constants
         sab = alpha_bar**0.5
         s1ab = (1-alpha_bar)**0.5
 
         # calculate eps and mu_x0 (mu_x0 is identical to the variable x0, but I calculate it back from eps like the formula)
-        eps = (xt-sab*x0.detach().clamp(-1,1))/(s1ab)
+        
+        mu_x0_ = x0.detach().clamp(-1,1)
+        eps = (xt-sab*mu_x0_)/(s1ab)
         
 
         # calculate var_x0
@@ -353,7 +340,6 @@ class ObjectiveGuider(Guider):
         var_x0 = ((1/alpha_bar-1)*var_x0_prior)/((1/alpha_bar-1)+var_x0_prior)
 
         # calculate g and h
-        mu_x0_ = x0.detach().clamp(-1,1)
         mu_x0_.requires_grad = True
         g = nth_derivative(self.objective(mu_x0_), mu_x0_, n=1)
         h = nth_derivative(self.objective(mu_x0_), mu_x0_, n=2)
@@ -362,18 +348,17 @@ class ObjectiveGuider(Guider):
         h[h_nan] = -1e8
 
         # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} @ grad_{mu_{x_0}} E[f(x_t)]
-        #grad_xt_mu = nth_derivative(x0.sum(),xt,1)
-        #guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
+        grad_xt_mu = nth_derivative(x0.sum(),xt,1)
+        guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
         #x0.backward((1/(1-h*var_x0)) * g)
         #guiding_force = xt.grad
-        guiding_force = 0.4*(1/(1-h*var_x0)) * g
         xt = xt.detach()
 
         # eps_guided = eps - w * sqrt(1-a_bar) * grad_{x_t} f(x_t)
         # from Diffusion Beats GANs
         guided_eps = eps - s1ab * guiding_force * self.weight
 
-        guided_x0 = (xt - s1ab*guided_eps)/(sab).clamp(-1,1)
+        guided_x0 = (xt - s1ab*guided_eps)/(sab)
 
         self.plotter.record('grad_mu',(1/(1-h*var_x0)) * g, 'rms',True)
         self.plotter.record('-h',-h, 'mean',True)
@@ -386,13 +371,12 @@ class ObjectiveGuider(Guider):
         self.plotter.record('x0 std 3',x0[3], 'std',True)
         self.plotter.record('objective',self.objective(mu_x0_)/4/16, 'mean')
         self.plotter.record('objective guided',self.objective(guided_x0)/4/16, 'mean')
+        
 
         if int(t.mean().item()*1000)%100 == 0:
             self.plotter.plot()
             #print('h_mean\th_std\tgrad_mu_rms\tguiding_force_rms\ts1ab_mean',sep='\t')
-            pr2img(mu_x0_[0,:32*4],f'log/experiments/temp/x0_{int(t.mean().item()*1000)}.png')
-            pr2img(guided_x0[0,:32*4],f'log/experiments/temp/guided_x0_{int(t.mean().item()*1000)}.png')
-            pr2img(xt[0,:32*4],f'log/experiments/temp/guided_xt_{int(t.mean().item()*1000)}.png')
+            print(self.objective(guided_x0)/4/16)
 
         if int(t.mean().item()*1000) == 0:
             self.plotter.reset()
@@ -400,67 +384,6 @@ class ObjectiveGuider(Guider):
         #print(h.mean().item(),var_x0.mean().item(),grad_xt_mu.mean().item(),((guiding_force**2).sum()**0.5).item(),sep='\t')
 
         return guided_x0
-    
-    def guide_mu(self, xt: torch.Tensor, x0: torch.Tensor ,mu, alpha_bar: float,t, var,beta,*args, **kwargs ) -> torch.Tensor:
-        if self.use_ddim:
-            return mu.detach()
-        
-        if t.mean().item() < 0.05:
-            return mu.detach()
-        # constants
-        sab = alpha_bar**0.5
-        s1ab = (1-alpha_bar)**0.5
-
-        # calculate eps and mu_x0 (mu_x0 is identical to the variable x0, but I calculate it back from eps like the formula)
-        eps = (xt-sab*x0.detach().clamp(-1,1))/(s1ab)
-        
-
-        # calculate var_x0
-        var_x0_prior = 0.1070
-        var_x0 = ((1/alpha_bar-1)*var_x0_prior)/((1/alpha_bar-1)+var_x0_prior)
-
-        # calculate g and h
-        #mu_x0_ = x0.detach().clamp(-1,1)
-        mu_x0_ = x0.detach()
-
-        mu_x0_.requires_grad = True
-        g = nth_derivative(self.objective(mu_x0_), mu_x0_, n=1)
-        h = nth_derivative(self.objective(mu_x0_), mu_x0_, n=2)
-        h = h.clamp(max=-0.001) # must be negative to avoid nan
-        h_nan = torch.isnan(h)
-
-        # grad_{x_t} f(x_t) = grad_{x_t} mu_{x_0} @ grad_{mu_{x_0}} E[f(x_t)]
-        #grad_xt_mu = nth_derivative(x0.sum(),xt,1)
-        #guiding_force = grad_xt_mu * (1/(1-h*var_x0)) * g
-        #x0 = x0.clamp(-1,1)
-
-        grad_x0_sim = (1/(1-h*var_x0)) * g
-        #grad_x0_sim[(grad_x0_sim<0) & (x0<=-1)] = 0 # simulate clamp
-        #grad_x0_sim[(grad_x0_sim>0) & (x0>=1)] = 0
-        grad_x0_sim[h_nan] = 0
-        x0.backward(grad_x0_sim)
-        guiding_force = xt.grad
-
-        #guiding_force = 0.4*(1/(1-h*var_x0)) * g
-
-        # mu_guided = mu + var* grad_{x_t} f(x_t)
-        # from Diffusion Beats GANs
-        guided_mu = mu + var * guiding_force * self.weight
-
-        self.plotter.record('guiding_force',guiding_force, 'rms',True)
-        self.plotter.record('s1ab',s1ab, 'mean',True)
-        self.plotter.record('mean_var',var, 'mean',True)
-        if int(t.mean().item()*1000)%100 == 0:
-            self.plotter.plot()
-            #print('h_mean\th_std\tgrad_mu_rms\tguiding_force_rms\ts1ab_mean',sep='\t')
-            pr2img(mu_x0_[0,:32*4],f'log/experiments/temp/x0_{int(t.mean().item()*1000)}.png')
-            pr2img(guided_mu[0,:32*4],f'log/experiments/temp/guided_x0_{int(t.mean().item()*1000)}.png')
-            pr2img(xt[0,:32*4],f'log/experiments/temp/guided_xt_{int(t.mean().item()*1000)}.png')
-
-        if int(t.mean().item()*1000) == 0:
-            self.plotter.reset()
-
-        return guided_mu
 
     def reset(self, *args, **kwargs) -> None:
         self.plotter.reset()
@@ -468,7 +391,7 @@ class ObjectiveGuider(Guider):
 
 
 class ChordGuider(Guider):
-    def __init__(self, chord_sequence: str, mask:Optional[torch.Tensor]=None, weight = 0.01,num_repeat_interleave=1, granularity=16, num_segments=32, cutoff_time_step = 0, objective_clamp = 1,use_ddim = False,gamma=1) -> None:
+    def __init__(self, chord_sequence: str, mask:Optional[torch.Tensor]=None, weight = 0.01,num_repeat_interleave=1, granularity=16, num_segments=32, cutoff_time_step = 0, objective_clamp = 1) -> None:
         super().__init__()
         self.target_chord = music.chord_sequence_to_chords(chord_sequence,num_repeat_interleave) # [segment]
         self.target_chroma = music.generate_chroma_map(self.target_chord,num_segments) # [segment, chroma]
@@ -479,7 +402,7 @@ class ChordGuider(Guider):
         self.cutoff_time_step = cutoff_time_step
         self.objective_clamp = objective_clamp
         #self.objective_guider = ObjectiveGuider(self.objective,weight=weight)
-        self.objective_guider = ObjectiveGuider(self.objective_softmax,weight=weight,use_ddim=use_ddim)
+        self.objective_guider = ObjectiveGuider(self.objective_softmax,weight=weight)
                 
         if self.mask is  None:
             self.mask = 1
@@ -489,11 +412,6 @@ class ChordGuider(Guider):
         self.target_idx = [c.base_chord_ord+c.is_minor*12 for c in self.target_chord] # [segment]
         self.target_idx*= (num_segments//len(self.target_idx))
         print([['C','C#','D','D#','E','F','F#','G','G#','A','A#','B','Cm','C#m','Dm','D#m','Em','Fm','F#m','Gm','G#m','Am','A#m','Bm'][i] for i in self.target_idx])
-
-        target_chroma = self.target_chroma.repeat_interleave(self.granularity,dim=0) #[tick, chroma]
-        target_pr = target_chroma.repeat(1,10) # [tick, C-1 - B9]
-        self.target_pr = target_pr[:,9:9+88]
-        self.gamma = gamma
 
     def objective(self,x):# cosine similarity
         # x: [batch, segment * granularity, pitch]
@@ -531,7 +449,7 @@ class ChordGuider(Guider):
         x_chroma = x_chroma.view(-1,self.num_segments,self.granularity,12)
 
         x_chroma = (x_chroma**L).mean(2)**(1/L) # [batch, segment, chroma]
-        x_chroma /= x_chroma.sum(dim=2,keepdim=True)
+        x_chroma = x_chroma/x_chroma.sum(dim=2,keepdim=True)
         target_chroma = self.target_chroma  # [segment, chroma]
         #target_chroma /= target_chroma.sum(dim=1,keepdim=True)
         
@@ -569,7 +487,8 @@ class ChordGuider(Guider):
 
         # softmax and return log prob of target class
 
-        distribution = torch.nn.functional.softmax(sim*self.gamma,dim=2) # [batch, segment, class_prob=25]
+        gamma = 1
+        distribution = torch.nn.functional.softmax(sim*gamma,dim=2) # [batch, segment, class_prob=25]
 
         target_prob = distribution[:,:,-1] # [batch, segment]
 
@@ -579,16 +498,9 @@ class ChordGuider(Guider):
         
     
     def guide_x0(self,*args, **kwargs) -> torch.Tensor:
-        guided_x0 = self.objective_guider.guide_x0(*args,**kwargs)
+        guided_x0 = self.objective_guider.guide_x0(*args, **kwargs)
         return guided_x0
 
-    def guide_mu(self,*args, **kwargs) -> torch.Tensor:
-        guided_mu = self.objective_guider.guide_mu(*args,**kwargs)
-        return guided_mu
-
-    # def get_timestep_range_and_noise(self):
-    #     w=0.7
-    #     return 0,900,self.diffusion.q_sample((self.target_pr*2-1)*w+torch.randn_like(self.target_pr)*(1-w),torch.tensor(900))
 
 class StrokeGuider(Guider):
     def __init__(self, weight, shape, blur=1, start_timestep = None, density_tolerance=0) -> None:
