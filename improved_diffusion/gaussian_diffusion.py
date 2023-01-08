@@ -335,6 +335,9 @@ class GaussianDiffusion:
         def process_xstart(x,pred_xstart):
             # guider is a guider.
             
+            if clip_denoised:
+                pred_xstart = pred_xstart.clamp(-1, 1)
+                
             if guider is not None:
                 info = {
                     'xt':x,
@@ -347,8 +350,6 @@ class GaussianDiffusion:
                     }
                 pred_xstart = guider.guide_x0(**info)
 
-            if clip_denoised:
-                pred_xstart = pred_xstart.clamp(-1, 1)
             return pred_xstart.detach()
 
         if self.model_mean_type == ModelMeanType.PREVIOUS_X:

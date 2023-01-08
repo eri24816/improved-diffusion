@@ -198,6 +198,10 @@ class Experiment:
 
 class ReconstructExperiment(Experiment):
     def load_base_songs(self):
+        if os.path.exists(os.path.join(self.exp_dir, 'base_songs')):
+            # remove old base_songs
+            shutil.rmtree(os.path.join(self.exp_dir, 'base_songs'))
+        os.makedirs(os.path.join(self.exp_dir, 'base_songs'), exist_ok=False)
         base_songs = get_base_songs(os.path.join(self.exp_root_dir,'base_songs'), num_songs=None, num_per_song=1, length = 32*16)
         for name, bs in base_songs.items():
             file_name = name+'.mid'
@@ -217,7 +221,76 @@ class ReconstructExperiment(Experiment):
     def run_with_params(self, params, model, diffusion):
         x_a = self.base_songs[params['base_song']]
         mb = guiders.MaskBuilder(x_a)
-        a_mask = mb.FirstBars(4) + mb.LastBars(4)
+        #a_mask = mb.FirstBars(4) + mb.LastBars(4)
+        a_mask = mb.Upper(65,True)
+        #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
+        guider = guiders.ReconstructGuider(x_a,a_mask,params['weight'],None)
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
+
+class SkylineExperiment(Experiment):
+    def load_base_songs(self):
+        if os.path.exists(os.path.join(self.exp_dir, 'base_songs')):
+            # remove old base_songs
+            shutil.rmtree(os.path.join(self.exp_dir, 'base_songs'))
+        os.makedirs(os.path.join(self.exp_dir, 'base_songs'), exist_ok=False)
+        base_songs = get_base_songs(os.path.join(self.exp_root_dir,'base_songs'), num_songs=None, num_per_song=1, length = 32*16)
+        for name, bs in base_songs.items():
+            file_name = name+'.mid'
+            file_path = os.path.join(self.exp_dir, 'base_songs', file_name)
+            print('saving', file_path)
+            PianoRoll.from_tensor(bs,normalized=True,thres = 10).to_midi(file_path)
+        return base_songs
+
+    def get_param_space(self):
+        self.base_songs = self.load_base_songs()
+        return ParamSpace([
+            {'name': 'weight', 'value_range': [4,8,2,16,1], 'relevant': True},
+            {'name': 'base_song', 'value_range': list(self.base_songs.keys()), 'relevant': True},
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+
+    def run_with_params(self, params, model, diffusion):
+        x_a : th.Tensor = self.base_songs[params['base_song']]
+
+        # create mask for skyline
+        skyline_pitches = [0] * x_a.shape[0]
+        current_highest = 0
+        dist = 9999
+        highests = []
+        for frame in x_a:
+            nonzero = (frame+1).nonzero()
+            if len(nonzero) != 0:
+                highests.append(int(nonzero.max().item()))
+            else:
+                highests.append(-1)
+        for i, highest in enumerate(highests):
+            if highest != -1:
+                if highest > current_highest:
+                    current_highest = highest
+                    dist = 0
+                else:
+                    flag = False
+                    for j in range(1,8):
+                        if i+j < len(highests) and highests[i+j] - highest > j/8*18:
+                            flag = True
+                            break
+                    beat_dist = dist/8
+                    pitch_dist = current_highest - highest
+                    if pitch_dist < beat_dist*18 and not flag:
+                        current_highest = highest
+                        dist = 0
+            skyline_pitches[i] = current_highest
+            dist += 1
+
+        a_mask_data = th.zeros_like(x_a)
+        for i, pitch in enumerate(skyline_pitches):
+            a_mask_data[i,pitch:] = 1
+
+        a_mask = guiders.Mask(a_mask_data,'skyline')
+
+        os.makedirs(os.path.join(self.exp_dir, 'base_songs/masked'), exist_ok=True)
+        PianoRoll.from_tensor(a_mask.data()*(x_a+1)-1,normalized=True,thres = 1).to_midi(os.path.join(self.exp_dir, 'base_songs/masked', f'{random.randint(0,10)}.mid'))
+
         #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
         guider = guiders.ReconstructGuider(x_a,a_mask,params['weight'],None)
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
@@ -270,9 +343,10 @@ if __name__ == "__main__":
     dist_util.setup_dist()
     shutil.rmtree('legacy/temp/',ignore_errors=True)
     os.makedirs('legacy/temp/',exist_ok=True)
-    #ReconstructExperiment('Fist4 + Last4 correct alpha',config,num_samples=4).run()
-    ChordExperiment('test',config,num_samples=4).run()
+    #ReconstructExperiment('Upper 65',config,num_samples=4).run()
+    #ChordExperiment('test',config,num_samples=4).run()
     #ScratchExperiment('test',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
+    SkylineExperiment('Skyline',config,num_samples=4).run()
 
 # python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml

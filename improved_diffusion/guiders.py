@@ -158,22 +158,22 @@ class MaskBuilder:
         m[int(n*32):int(end_bar*32)]=1
         return Mask(m,f'Bar{n}-{end_bar}')
 
-    def Upper(self,pitch,piano = False):
-        if piano:
+    def Upper(self,pitch,midi = False):
+        if midi:
             pitch -= 21
         m = torch.zeros_like(self.target_tensor)
         m[:,pitch:]=1
         return Mask(m,f'Upper{pitch}')
 
-    def Lower(self,pitch,piano = False):
-        if piano:
+    def Lower(self,pitch,midi = False):
+        if midi:
             pitch -= 21
         m = torch.zeros_like(self.target_tensor)
         m[:,:pitch+1]=1
         return Mask(m,f'Lower{pitch}')
 
-    def Middle(self,pitch,piano = False):
-        if piano:
+    def Middle(self,pitch,midi = False):
+        if midi:
             pitch -= 21
         m = torch.zeros_like(self.target_tensor)
         m[:,pitch:]=1
@@ -239,14 +239,14 @@ class ReconstructGuider(Guider):
         self.q_sample_loop = q_sample_loop
         self.q_sample_iter = None
 
-    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha: torch.Tensor,t, *args, **kwargs) -> torch.Tensor:
+    def guide_x0(self, xt: torch.Tensor, x0: torch.Tensor, alpha_bar: torch.Tensor,t, *args, **kwargs) -> torch.Tensor:
         self.t-=1
         self.x_a = self.x_a.to(xt.device)
         self.a_mask = self.a_mask.to(xt.device)
         self.b_mask = self.b_mask.to(xt.device)
         # sample z_a
         if self.q_sample_loop is not None:
-            z_a = next(self.q_sample_iter)
+            z_a = next(self.q_sample_iter)  
         else:
             z_a = self.x_a
 
@@ -255,10 +255,8 @@ class ReconstructGuider(Guider):
         (((x0 - self.x_a)**2)*self.a_mask).sum().backward()
         z_b_grad = xt.grad * self.b_mask
 
-        alpha = alpha.unsqueeze(1).unsqueeze(2).expand_as(x0)
-
         # guide the x_b
-        guided_x_b = x0 - (self.w_r*alpha/2) * z_b_grad
+        guided_x_b = x0 - (self.w_r*alpha_bar**0.5/2) * z_b_grad
 
         # return the guided x
         guided_x = guided_x_b * self.b_mask + z_a * self.a_mask
