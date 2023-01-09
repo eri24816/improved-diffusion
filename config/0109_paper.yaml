@@ -1,0 +1,24 @@
+# use loss mask
+data_dir: /screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll
+diffusion:
+  predict_xstart: True
+  use_loss_mask: True
+
+decoder:
+  len_dec: 16
+  frame_size: 1
+  zero: True
+
+latent:
+  latent_size: 0 # no latent space. no encoder
+
+training:
+  lr: 2.0e-5
+  one_bar_steps: 1000_000
+  save_interval: 100_000
+#  resume_checkpoint: "log/16bar_scratch/model350000.pt"
+
+sampling:
+  batch_size: 4
+  num_samples: 4
+  use_ddim: False

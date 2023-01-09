@@ -39,12 +39,19 @@ def main():
         segment_length= config['decoder']['len_dec']*32, # n_bar * 32
     )
 
+    one_bar_data = load_data(
+        data_dir=config['data_dir'],
+        batch_size=config['training']['global_batch_size']//dist_util.get_world_size(),
+        segment_length= 32
+    )
+
     logger.log("training...")
     TrainLoop(
         config = config,
         model=model,
         diffusion=diffusion,
         data=data,
+        one_bar_data=one_bar_data,
         **config['training']
     ).run_loop()
 

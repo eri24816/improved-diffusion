@@ -48,6 +48,8 @@ class TransformerEncoderLayer(nn.Module):
             self.activation_relu_or_gelu = 0
         self.activation = activation
 
+        self.use_temporal_attn = True
+
     def __setstate__(self, state):
         super(TransformerEncoderLayer, self).__setstate__(state)
         if not hasattr(self, 'activation'):
@@ -68,14 +70,22 @@ class TransformerEncoderLayer(nn.Module):
         x = src
         if self.norm_first:
             x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
-            x = x + self._temporal_attn_block(self.norm2(x))
+            if self.use_temporal_attn:
+                x = x + self._temporal_attn_block(self.norm2(x))
             x = x + self._ff_block(self.norm3(x))
         else:
             x = self.norm1(x + self._sa_block(x, src_mask, src_key_padding_mask))
-            x = self.norm2(x + self._temporal_attn_block(x))
+            if self.use_temporal_attn:
+                x = self.norm2(x + self._temporal_attn_block(x))
             x = self.norm3(x + self._ff_block(x))
 
         return x
+
+    def turn_off_temporal_attn(self):
+        self.use_temporal_attn = False
+
+    def turn_on_temporal_attn(self):
+        self.use_temporal_attn = True
 
     # self-attention block
     def _sa_block(self, x: Tensor,
@@ -127,7 +137,8 @@ class FFTransformer(nn.Module):
             )
         )
 
-        self.transformer = nn.Sequential(*[TransformerEncoderLayer(d_model=d, nhead=n_heads,max_distance=num_frames,batch_first=True) for _ in range(n_blocks)])
+        self.transformer_layers = [TransformerEncoderLayer(d_model=d, nhead=n_heads,max_distance=num_frames,batch_first=True) for _ in range(n_blocks)]
+        self.transformer = nn.Sequential(*self.transformer_layers)
 
         self.out_block = nn.Sequential(# [B,L,D] -> [B,L,P]
             nn.Linear(d,88)
@@ -182,6 +193,14 @@ class FFTransformer(nn.Module):
             out = mu
         
         return out
+
+    def turn_off_temporal_attn(self):
+        for layer in self.transformer_layers:
+            layer.turn_off_temporal_attn()
+
+    def turn_on_temporal_attn(self):
+        for layer in self.transformer_layers:
+            layer.turn_on_temporal_attn()
 
     @classmethod
     def test(cls):

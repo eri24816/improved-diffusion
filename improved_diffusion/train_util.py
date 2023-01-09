@@ -54,6 +54,8 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        one_bar_steps=0,
+        one_bar_data=None,
     ):
         self.config = config
         self.model = model
@@ -66,6 +68,10 @@ class TrainLoop:
         self.eps_model = model['eps_model']
         self.diffusion = diffusion
         self.data = data
+        if one_bar_steps > 0:
+            assert one_bar_data is not None
+        self.one_bar_data = one_bar_data
+        self.one_bar_steps = one_bar_steps
         self.batch_size = global_batch_size//dist.get_world_size()
         self.microbatch = microbatch if microbatch > 0 else self.batch_size
         self.lr = lr
@@ -183,7 +189,14 @@ class TrainLoop:
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
-            batch = next(self.data)
+            if self.step + self.resume_step < self.one_bar_steps:
+                assert self.one_bar_data is not None
+                batch = next(self.one_bar_data)
+                self.eps_model.turn_off_temporal_attn()
+            else:
+                batch = next(self.data)
+                self.eps_model.turn_on_temporal_attn()
+                
             self.model.train()
             self.run_step(batch)
             if self.step % self.log_interval == 0:

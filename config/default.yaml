@@ -47,6 +47,7 @@ training:
   use_fp16: False
   fp16_scale_growth: 1.0e-3
   schedule_sampler: loss-second-moment
+  one_bar_steps: 0
 
 sampling:
   model_path: ""

@@ -205,6 +205,8 @@ class RelAttention(nn.Module):
         self.rotary_emb = rotary_emb
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias = False)
         self.to_out = nn.Linear(hidden_dim, dim, bias = False)
+        
+        torch.nn.init.zeros_(self.to_out.weight)
         self.relpb = RelativePositionBias(heads = self.heads, max_distance = max_distance)
 
     def forward(
