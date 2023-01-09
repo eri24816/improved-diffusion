@@ -14,7 +14,7 @@ import pandas
 
 class PianoRollDataset(Dataset):
     def __init__(self, data_dir, segment_len = 0, hop_len = 32, max_duration = 32*180, shard=0, num_shards=1, max_pieces = None, metadata_file = None):
-        print(f'Creating dataset {segment_len}')
+        print(f'Creating dataset segment_len = {segment_len}')
         if metadata_file is not None:
             metadata = pandas.read_csv(metadata_file)
         else:
@@ -45,6 +45,8 @@ class PianoRollDataset(Dataset):
         else:
             self.length = len(self.pianorolls)
             self.max_duration = min(max_duration,max([pianoroll.duration for pianoroll in self.pianorolls]))
+
+        print(f'Created dataset with {self.length} data points from {len(self.pianorolls)} pieces')
 
     def __len__(self):
         return self.length

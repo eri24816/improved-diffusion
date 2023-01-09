@@ -1,5 +1,5 @@
 # use loss mask
-data_dir: /screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll
+data_dir: /screamlab/home/eri24816/pianoroll_dataset/data/dataset_1/pianoroll_split
 diffusion:
   predict_xstart: True
   use_loss_mask: True

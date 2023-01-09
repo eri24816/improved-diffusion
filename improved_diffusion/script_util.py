@@ -158,7 +158,6 @@ def load_data(
         )
     else:
         dataset = pianoroll.PianoRollDataset(data_dir, segment_length)
-    print(f'Dataset size: {len(dataset)}')
     if deterministic:
         loader = pianoroll.DataLoader(
             dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True

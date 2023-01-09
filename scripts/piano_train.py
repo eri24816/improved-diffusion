@@ -34,13 +34,13 @@ def main():
     
     logger.log("creating data loader...")
     data = load_data(
-        data_dir=config['data_dir'],
+        data_dir=os.path.join(config['data_dir'],'train'),
         batch_size=config['training']['global_batch_size']//dist_util.get_world_size(),
         segment_length= config['decoder']['len_dec']*32, # n_bar * 32
     )
 
     one_bar_data = load_data(
-        data_dir=config['data_dir'],
+        data_dir=os.path.join(config['data_dir'],'train'),
         batch_size=config['training']['global_batch_size']//dist_util.get_world_size(),
         segment_length= 32
     )
