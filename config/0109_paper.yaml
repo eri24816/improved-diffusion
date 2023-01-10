@@ -14,11 +14,12 @@ latent:
 
 training:
   lr: 2.0e-5
-  one_bar_steps: 1000_000
+  one_bar_steps: 500_000
   save_interval: 100_000
-#  resume_checkpoint: "log/16bar_scratch/model350000.pt"
+  resume_checkpoint: "log/0109_paper/ema_0.9999_200000.pt"
 
 sampling:
   batch_size: 4
   num_samples: 4
   use_ddim: False
+  model_path: "log/0109_paper/ema_0.9999_500000.pt"
