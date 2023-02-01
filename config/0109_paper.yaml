@@ -22,4 +22,4 @@ sampling:
   batch_size: 4
   num_samples: 4
   use_ddim: False
-  model_path: "log/0109_paper/ema_0.9999_500000.pt"
+  model_path: "log/0109_paper/ema_0.9999_1600000.pt"

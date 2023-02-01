@@ -56,7 +56,9 @@ def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, 
     
     model.to(dist_util.dev()).eval()
     encoder,eps_model = model['encoder'] if 'encoder' in model else None, model['eps_model']
-    guider.set_diffusion(diffusion)
+
+    if guider is not None:
+        guider.set_diffusion(diffusion)
 
     params = params.copy()
 
@@ -75,12 +77,16 @@ def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, 
             model_kwargs["condition"] = generate_latent(conf, encoder, len_dec*32, exp_dir)
 
         # same noise for the whole batch
-        min_timestep, max_timestep, noise = guider.get_timestep_range_and_noise()
+        if guider is not None:
+            min_timestep, max_timestep, noise = guider.get_timestep_range_and_noise()
+        else:
+            min_timestep, max_timestep, noise = 0, None, None
         if noise is None:
             noise = th.randn(shape,device=dist_util.dev()).expand(shape)
         else:
             noise = noise.unsqueeze(0).expand(shape).to(dist_util.dev())
-        guider.reset(noise)
+        if guider is not None:
+            guider.reset(noise)
 
         sample = sample_fn(eps_model,shape,progress=True,
             clip_denoised=conf['clip_denoised'],
@@ -320,9 +326,10 @@ class ScratchExperiment(Experiment):
     def get_param_space(self) -> ParamSpace:
         return ParamSpace([
             {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+            {'name': 'batch_idx', 'value_range': list(range(16)), 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
-        guider = guiders.NoneGuider()
+        guider = None
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
 class StrokeExperiment(Experiment):
@@ -339,14 +346,27 @@ class StrokeExperiment(Experiment):
         guider.load_image(params['image_file'])
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
+class PolyphonyExperiment(Experiment):
+    def get_param_space(self) -> ParamSpace:
+        return ParamSpace([
+            {'name': 'polyphony', 'value_range':['4 4 4 4 5 5 5 5 6 6 7 7 8 8 9 9'], 'relevant': True},
+            {'name': 'weight', 'value_range': [30,50], 'relevant': True},
+            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+        ])
+
+    def run_with_params(self, params, model, diffusion):
+        guider = guiders.PolyphonyGuider(params['polyphony'],params['weight'])
+        sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
+
 if __name__ == "__main__":
     dist_util.setup_dist()
     shutil.rmtree('legacy/temp/',ignore_errors=True)
     os.makedirs('legacy/temp/',exist_ok=True)
     #ReconstructExperiment('Upper 65',config,num_samples=4).run()
     #ChordExperiment('test',config,num_samples=4).run()
-    #ScratchExperiment('test',config,num_samples=4).run()
+    ScratchExperiment('test',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
-    SkylineExperiment('Skyline',config,num_samples=4).run()
+    #SkylineExperiment('Skyline',config,num_samples=4).run()
+    #PolyphonyExperiment('Polyphony',config,num_samples=4).run()
 
 # python scripts/piano_exp.py --config config/16bar_v_scratch_lm.yaml

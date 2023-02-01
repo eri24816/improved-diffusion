@@ -448,6 +448,7 @@ class ObjectiveGuider(Guider):
         self.plotter.record('guiding_force',guiding_force, 'rms',True)
         self.plotter.record('s1ab',s1ab, 'mean',True)
         self.plotter.record('mean_var',var, 'mean',True)
+        self.plotter.record('log_loss', -self.objective(mu_x0_), 'mean',True)
         if int(t.mean().item()*1000)%100 == 0:
             self.plotter.plot()
             #print('h_mean\th_std\tgrad_mu_rms\tguiding_force_rms\ts1ab_mean',sep='\t')
@@ -650,6 +651,93 @@ class StrokeGuider(Guider):
         plt.imsave(fname, noise.cpu().numpy())
 
         return min_timestep, max_timestep, noise
+
+def calc_polyphony(pr:torch.Tensor,velocity_mapping = lambda x: (x<0.2)*4.5*x+(x>0.2)*(0.9+0.125*(x-0.2))):
+    """Calculate the polyphony of a one-bar pianoroll.
+
+    Args:
+        pr (torch.Tensor): A pianoroll tensor with shape (B,32,88). Values are in [0,127].
+
+    Returns:
+        int: The polyphony of the pianoroll.
+    """
+    assert list(pr.shape)[-2:] == [32,88]
+    B = pr.shape[0]
+    pr_clamped = velocity_mapping((pr/128).clamp(0,1))
+    pr = velocity_mapping((pr/128).clamp(0,1)) # [B,32,88]
+    #pr = (pr>0).float()#===============================
+    end_dist_list = []
+    scanner = torch.zeros(B,88,device=pr.device)
+    for i in range(31,-1,-1):
+        scanner = scanner + 1
+        end_dist_list += [scanner]
+        current = pr_clamped[:,i]
+        scanner = scanner * (1-current)
+
+    end_dist = torch.stack(list(reversed(end_dist_list)),dim=1) # [B,32,88]
+    weights = end_dist.detach()
+
+    weighted_pr = pr * weights # [B,32,88]
+    polyphony = weighted_pr.sum(dim=2).mean(dim=1) # [B]
+    return polyphony
+
+def map_from_quantiles(x:torch.Tensor,quantiles):
+    # map x with quantiles of its distribution to uniform [0,1].
+    # differentiable
+    # quantiles includes 0 and 1
+    result = torch.zeros_like(x)
+    n = len(quantiles)-1
+    for i in range(n):
+        result += (x>=quantiles[i])*(x<quantiles[i+1]) * (i/n + (x-quantiles[i])/(quantiles[i+1]-quantiles[i])/n)
+    result += (x>=quantiles[n]) * (i/n + (x-quantiles[i])/(quantiles[i+1]-quantiles[i])/n)
+    return result
+
+def map_to_quantiles(x:float,quantiles):
+    # map x with uniform [0,1] to quantiles of its distribution.
+    # differentiable
+    # quantiles includes 0 and 1
+    n = len(quantiles)-1
+    for i in range(n):
+        if x < (i+1)/n:
+            return quantiles[i] + (x-i/n)*(quantiles[i+1]-quantiles[i])
+    return quantiles[n]
+
+class PolyphonyGuider(Guider):
+    quantiles = [0.0, 3.7857017517089844, 4.85215015411377, 5.589112281799317, 6.218849468231202, 6.821882247924805, 7.497886848449708, 8.337719917297363, 9.453008842468263, 11.174796867370604, 30.271657943725586]
+
+    @staticmethod
+    def generate_target(polyphony:List[float],granularity,num_segments):
+        target = [0]*num_segments
+        for i in range(num_segments):
+            target[i] = map_to_quantiles( polyphony[i]/10,quantiles=PolyphonyGuider.quantiles)
+        return target
+
+    def __init__(self,polyphony,weight,granularity=32,num_segments=16) -> None:
+        '''
+        polyphony: a string of polyphony, e.g. '5 5 5 5 6 6 6 6 7 7 7 7 8 8 8 8'. Minimum 0, maximum 10.
+        '''
+        super().__init__()
+        polyphony = [float(x) for x in polyphony.split(' ')]
+        self.target = self.generate_target(polyphony,granularity,num_segments)
+        self.objective_guider = ObjectiveGuider(self.objective, weight=weight,use_ddim=False)
+
+    def objective(self,x:torch.Tensor):
+        B = x.shape[0]
+        x = x.contiguous()
+        loss = 0
+        for bar, target in zip(x.split(32,1),self.target):
+            bar = (bar + 1)/2*128
+            polyphony = calc_polyphony(bar)
+            if torch.randint(0,100,[1]).item() == 0:
+                print(polyphony.detach().cpu().numpy(),target)
+            #print(bar)
+            loss += torch.sum(((polyphony-target)/88)**2)
+        return -loss
+
+    def guide_mu(self,*args, **kwargs) -> torch.Tensor:
+        guided_mu = self.objective_guider.guide_mu(*args,**kwargs)
+        return guided_mu
+        
 
 #TODO: Guiders for skyline, baseline, chord
 
