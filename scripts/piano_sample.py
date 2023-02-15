@@ -48,8 +48,10 @@ def main():
     a_mask = mb.FirstBars(8)
 
     #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
-    guider = guiders.ReconstructGuider(x_a,a_mask,15,None)
-    exp_name = f'{base_song.metadata.name}/{guider}'
+    #guider = guiders.ReconstructGuider(x_a,a_mask,15,None)
+    #exp_name = f'{base_song.metadata.name}/{guider}'
+    guider = guiders.NoneGuider()
+    exp_name = '0109 Calculate polyphony and infinite sample'
 
     '''
     generate samples

@@ -20,6 +20,6 @@ training:
 
 sampling:
   batch_size: 4
-  num_samples: 4
+  num_samples: 32
   use_ddim: False
   model_path: "log/0109_paper/ema_0.9999_1600000.pt"

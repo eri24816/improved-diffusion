@@ -18,6 +18,6 @@ training:
 
 sampling:
   batch_size: 4
-  num_samples: 4
+  num_samples: 32
   model_path: "log/16bar_v_scratch_zero_lm/ema_0.9999_2700000.pt"
   use_ddim: False

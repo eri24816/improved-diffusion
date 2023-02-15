@@ -72,6 +72,12 @@ class RelativePositionBias(nn.Module):
         self.num_buckets = num_buckets
         self.max_distance = max_distance
         self.relative_attention_bias = nn.Embedding(num_buckets, heads)
+        n=16
+        q_pos = torch.arange(n, dtype = torch.long, device = 'cuda')
+        k_pos = torch.arange(n, dtype = torch.long, device = 'cuda')
+        rel_pos = rearrange(k_pos, 'j -> 1 j') - rearrange(q_pos, 'i -> i 1')
+        rp_bucket = self._relative_position_bucket(rel_pos, num_buckets = self.num_buckets, max_distance = self.max_distance)
+        print(rp_bucket)
 
     @staticmethod
     def _relative_position_bucket(relative_position, num_buckets = 32, max_distance = 128):
