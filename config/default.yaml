@@ -31,8 +31,8 @@ decoder:
   dim_internal: 512
   n_blocks: 4
   n_heads: 8
-
-  spec_num_frames: -1 # the current model was wrongly set num_frames as 32. To use the checkpoints, set it to 32.
+  spec_num_frames: -1
+  positional_encoding: binary_integers
 
 training:
   lr: 1.0e-4

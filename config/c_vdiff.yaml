@@ -1,0 +1,25 @@
+# use loss mask
+data_dir: /home/eri24816/pianoroll_split
+diffusion:
+  predict_xstart: True
+  use_loss_mask: True
+
+decoder:
+  len_dec: 16
+  frame_size: 16
+  zero: True
+  positional_encoding: sinusoidal
+
+latent:
+  latent_size: 0 # no latent space. no encoder
+
+training:
+  lr: 2.0e-5
+  one_bar_steps: 0
+  save_interval: 200_000
+
+sampling:
+  batch_size: 4
+  num_samples: 32
+  use_ddim: False
+  model_path: "log/c_vdiff/ema_0.9999_2400000.pt"

@@ -21,7 +21,7 @@ def create_model(config):
         models['encoder'] = Encoder(cEnc['dim_internal'],cEnc['n_blocks'],cEnc['n_heads'],out_d=cLat['latent_size'],length=cEnc['len_enc']*32)
 
     init_out = (-1 if config['diffusion']['predict_xstart'] else 0) if cDec['zero'] else None # tensor -1 is midi 0
-    models['eps_model'] = FFTransformer(cDec['dim_internal'],cDec['len_dec'] if cDec['spec_num_frames']==-1 else cDec['spec_num_frames'],cDec['n_blocks'],cDec['n_heads'],learn_sigma=config['diffusion']['learn_sigma'],d_cond=cLat['latent_size'],frame_size=cDec['frame_size']*32,init_out=init_out)
+    models['eps_model'] = FFTransformer(cDec['dim_internal'],cDec['len_dec'] if cDec['spec_num_frames']==-1 else cDec['spec_num_frames'],cDec['n_blocks'],cDec['n_heads'],learn_sigma=config['diffusion']['learn_sigma'],d_cond=cLat['latent_size'],frame_size=cDec['frame_size']*32,init_out=init_out,positional_encoding=cDec['positional_encoding'])
 
     return torch.nn.ModuleDict(models)
 

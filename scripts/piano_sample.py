@@ -37,21 +37,22 @@ def main():
     '''
     setup guider
     '''
-    base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/f.mid')
-    x_a = []
-    for i in range(conf['batch_size']):
-        start_tick = random.randint(0,max(0,base_song.duration//32-8))*32
-        #start_tick = 8*32
-        x_a.append(base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True).to(dist_util.dev()))
-    x_a = th.stack(x_a,dim=0)
-    mb = guiders.MaskBuilder(x_a[0])
-    a_mask = mb.FirstBars(8)
+
+    # base_song = PianoRoll.from_midi('log/16bar_v_scratch_zero_lm/samples/input/f.mid')
+    # x_a = []
+    # for i in range(conf['batch_size']):
+    #     start_tick = random.randint(0,max(0,base_song.duration//32-8))*32
+    #     #start_tick = 8*32
+    #     x_a.append(base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True).to(dist_util.dev()))
+    # x_a = th.stack(x_a,dim=0)
+    # mb = guiders.MaskBuilder(x_a[0])
+    # a_mask = mb.FirstBars(8)
 
     #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
     #guider = guiders.ReconstructGuider(x_a,a_mask,15,None)
     #exp_name = f'{base_song.metadata.name}/{guider}'
     guider = guiders.NoneGuider()
-    exp_name = '0109 Calculate polyphony and infinite sample'
+    exp_name = 'a from scratch'
 
     '''
     generate samples

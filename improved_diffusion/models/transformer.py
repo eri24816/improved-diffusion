@@ -9,6 +9,24 @@ from .vdiff import EinopsToAndFrom, RelAttention # video diffusion stuffs
 
 from typing import Optional, Union, Callable, List, Tuple
 
+class SinusoidalPositionalEncoding(nn.Module):
+    def __init__(self, demb):
+        super(SinusoidalPositionalEncoding, self).__init__()
+
+        self.demb = demb
+
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, demb, 2.0) / demb))
+        self.inv_freq = inv_freq
+
+    def forward(self, pos_seq, bsz=None):
+        sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
+        pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
+
+        if bsz is not None:
+            return pos_emb[:,None,:].expand(-1, bsz, -1)
+        else:
+            return pos_emb[:,None,:]
+
 class TransformerEncoderLayer(nn.Module):
     '''
     Modified version of the original TransformerEncoderLayer. Inserted a temporal attention block between the self-attention block and the feed forward block.
@@ -69,14 +87,20 @@ class TransformerEncoderLayer(nn.Module):
         """
         x = src
         if self.norm_first:
+            #print('[1] shape before self-attention: ', x.shape)
             x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
             if self.use_temporal_attn:
+                #print('[2] shape before temporal attention: ', x.shape)
                 x = x + self._temporal_attn_block(self.norm2(x))
+            #print('[3] shape before feed forward: ', x.shape)
             x = x + self._ff_block(self.norm3(x))
         else:
+            #print('[1] shape before self-attention: ', x.shape)
             x = self.norm1(x + self._sa_block(x, src_mask, src_key_padding_mask))
             if self.use_temporal_attn:
+                #print('[2] shape before temporal attention: ', x.shape)
                 x = self.norm2(x + self._temporal_attn_block(x))
+            #print('[3] shape before feed forward: ', x.shape)
             x = self.norm3(x + self._ff_block(x))
 
         return x
@@ -108,7 +132,7 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class FFTransformer(nn.Module):
-    def __init__(self,d,num_frames,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False, Nonlinearity = nn.SiLU, frame_size = 1, init_out = None) -> None:
+    def __init__(self,d,num_frames,n_blocks = 4, n_heads = 8, d_cond = 0, learn_sigma = False, Nonlinearity = nn.SiLU, frame_size = 1, init_out = None,positional_encoding='binary_integers') -> None:
         super().__init__()
 
         self.init_out = init_out
@@ -118,10 +142,18 @@ class FFTransformer(nn.Module):
         self.time_emb = nn.Sequential(nn.Linear(1, self.d_time_emb),Nonlinearity())
  
         # positional embedding
-        self.d_pos_emb = 11#+32
-        pos = np.arange(0,frame_size)
-        pos_emb = [(pos//(2**i))%2 for i in range(11)]#+[pos%32 == i for i in range(32)]
-        pos_emb = np.stack(pos_emb).T
+        if positional_encoding == 'binary_integers':
+            self.d_pos_emb = 11#+32
+            pos = np.arange(0,frame_size)
+            pos_emb = [(pos//(2**i))%2 for i in range(11)]#+[pos%32 == i for i in range(32)]
+            pos_emb = np.stack(pos_emb).T
+
+        elif positional_encoding == 'sinusoidal':
+            self.d_pos_emb = 512
+            pos_seq  = torch.arange(frame_size-1, -1, -1.0)
+            pos_emb = SinusoidalPositionalEncoding(self.d_pos_emb)(pos_seq)[:,0,:]
+        else:
+            raise ValueError('positional_encoding must be either "binary_integers" or "sinusoidal"')
 
         #self.register_buffer('pos_emb',pos_emb.clone().contiguous())
         self.register_buffer('pos_emb',torch.tensor(pos_emb,dtype=torch.float).clone())
@@ -177,10 +209,15 @@ class FFTransformer(nn.Module):
 
         x = x.view(B,num_frames,frame_size,-1) # [B, l, f, D] #TODO: use rearrange
 
+        #print('[1] shape before in block: ', x.shape)
         x = self.in_block(x)
+        #print('[2] shape before transformer: ', x.shape)
         x = self.transformer(x)
+        #print('[3] shape before out block: ', x.shape)
         mu = self.out_block(x)
+        #print('[4] shape after out block: ', mu.shape)
         mu = mu.view(B,L,88) # squeeze num_frames and frame_size #TODO: use rearrange
+        #exit()
 
         if self.init_out is not None:
             mu = mu + self.init_out

@@ -219,16 +219,16 @@ class ReconstructExperiment(Experiment):
     def get_param_space(self):
         self.base_songs = self.load_base_songs()
         return ParamSpace([
-            {'name': 'weight', 'value_range': [1,2,4,8,16], 'relevant': True},
+            {'name': 'weight', 'value_range': [2,4,8], 'relevant': True},
             {'name': 'base_song', 'value_range': list(self.base_songs.keys()), 'relevant': True},
-            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
+            {'name': 'model', 'value_range': ['c'], 'relevant': True},
         ])
 
     def run_with_params(self, params, model, diffusion):
         x_a = self.base_songs[params['base_song']]
         mb = guiders.MaskBuilder(x_a)
-        #a_mask = mb.FirstBars(4) + mb.LastBars(4)
-        a_mask = mb.Upper(65,True)
+        a_mask = mb.FirstBars(8)
+        #a_mask = mb.Upper(65,True)
         #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
         guider = guiders.ReconstructGuider(x_a,a_mask,params['weight'],None)
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
@@ -359,12 +359,13 @@ class PolyphonyExperiment(Experiment):
         sample_with_params(self.num_samples,self.exp_root_dir,self.exp_name,params,config,model,diffusion,guider)
 
 if __name__ == "__main__":
+    random.seed('uwu')
     dist_util.setup_dist()
     shutil.rmtree('legacy/temp/',ignore_errors=True)
     os.makedirs('legacy/temp/',exist_ok=True)
-    #ReconstructExperiment('Upper 65',config,num_samples=4).run()
+    ReconstructExperiment('8 bar prompt c',config,num_samples=4).run()
     #ChordExperiment('test',config,num_samples=4).run()
-    ScratchExperiment('test',config,num_samples=4).run()
+    #ScratchExperiment('test',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
     #SkylineExperiment('Skyline',config,num_samples=4).run()
     #PolyphonyExperiment('Polyphony',config,num_samples=4).run()

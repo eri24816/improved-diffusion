@@ -10,8 +10,10 @@ import blobfile as bf
 try:
     from mpi4py import MPI
     USE_DIST = True
+    print("Using MPI.")
 except ModuleNotFoundError:
     USE_DIST = False
+    print("Not using MPI.")
 
 import torch as th
 import torch.distributed as dist
@@ -46,7 +48,6 @@ def setup_dist():
     port = comm.bcast(_find_free_port(), root=0)
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend=backend, init_method="env://")
-
 
 def dev():
     """
