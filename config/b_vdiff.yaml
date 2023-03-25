@@ -19,6 +19,6 @@ training:
 
 sampling:
   batch_size: 4
-  num_samples: 32
+  num_samples: 64
   use_ddim: False
   model_path: "log/b_vdiff/ema_0.9999_2800000.pt"

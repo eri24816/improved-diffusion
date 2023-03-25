@@ -3,6 +3,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 import os
 import random
+from matplotlib import pyplot as plt
+import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
 from math import inf, ceil
@@ -125,9 +127,10 @@ class PianoRoll:
         '''
         midi = miditoolkit.midi.parser.MidiFile(path)
         data = {"onset_events":[],"pedal_events":[]}
-        for note in midi.instruments[0].notes:
-            note : miditoolkit.Note
-            data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity,int(note.end*8/midi.ticks_per_beat)])
+        if len(midi.instruments)>0:
+            for note in midi.instruments[0].notes:
+                note : miditoolkit.Note
+                data["onset_events"].append([int(note.start*8/midi.ticks_per_beat),note.pitch,note.velocity,int(note.end*8/midi.ticks_per_beat)])
         pr = PianoRoll(data)
         pr.set_metadata(name = path.split('/')[-1].split('.mid')[0])
         return pr
@@ -180,6 +183,13 @@ class PianoRoll:
             notes = self.notes
         for note in notes:
             yield note.onset, note.pitch, note.velocity, note.offset
+
+    def iter_over_bars(self,bar_length = 32):
+        '''
+        generator that yields (onset, pitch, velocity, offset iterator)
+        '''
+        for bar_start in range(0,self.duration,bar_length):
+            yield self.slice(bar_start,bar_start+bar_length)
     
     def get_offsets_with_pedal(self,pedal) -> list[int]:
         offsets = []
@@ -278,7 +288,7 @@ class PianoRoll:
             midi.dump(path)
         return midi
 
-    def save_to_pretty_score(self,path,separate_point = 60,position_weight = 3)->list[Note]:
+    def save_to_pretty_score(self,path,separate_point = 60,position_weight = 3,mode='combine',make_pretty_voice=True)->list[Note]:
         notes = deepcopy(self.notes)
         # separate left and right hand
         left_hand:list[Note]  = []
@@ -339,14 +349,36 @@ class PianoRoll:
                             c.offset = stop_time
                         current = [note]
         
-        pretty_voice(left_hand)
-        pretty_voice(right_hand)
+        if make_pretty_voice:
+            pretty_voice(left_hand)
+            pretty_voice(right_hand)
         res = [right_hand,left_hand]
         print("left hand notes:",len(left_hand))
         print("right hand notes:",len(right_hand))
-        self._save_to_midi(res,path)
+        if mode == 'combine':
+            self._save_to_midi(res,path)
+        elif mode == 'separate':
+            self._save_to_midi([left_hand],path+"_left.mid")
+            self._save_to_midi([right_hand],path+"_right.mid")
 
-        
+    def to_img(self,path):
+        '''
+        Convert the pianoroll to a image
+        '''
+        img = np.zeros((88,self.duration))
+        for time, pitch, vel, offset in self.iter_over_notes():
+            img[pitch-21,time] = vel
+        #enlarge the image 
+        img = np.repeat(img,8,axis=0)
+        img = np.repeat(img,8,axis=1)
+        for t in range(self.duration):
+            if t%32 == 0:
+                img[:,t*8] = 120
+
+        #inverse y
+        img = np.flip(img,axis=0)
+
+        plt.imsave(path,img,cmap='gray',vmin=0,vmax=127)
     '''
     ==================
     Basic operations

@@ -39,7 +39,7 @@ def main():
     setup guider
     '''
     start_tick = 0
-    base_song = PianoRoll.from_midi("log/16bar_v_scratch_zero_lm/samples/input/(2, 'PianoRoll Bar 000 - 016 of 5 0', 'vdiff2M7', 1).mid")
+    base_song = PianoRoll.from_midi("log/input/untitlessadd.mid")
     exp_name = f'inf/{base_song.metadata.name}'
     base_song = base_song.to_tensor(normalized=True,start_time=start_tick,end_time=start_tick+32*len_dec,padding=True)
 

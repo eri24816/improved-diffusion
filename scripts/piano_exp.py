@@ -325,8 +325,8 @@ class ChordExperiment(Experiment):
 class ScratchExperiment(Experiment):
     def get_param_space(self) -> ParamSpace:
         return ParamSpace([
-            {'name': 'model', 'value_range': ['vdiff2M7'], 'relevant': True},
-            {'name': 'batch_idx', 'value_range': list(range(16)), 'relevant': True},
+            {'name': 'model', 'value_range': [self.exp_name], 'relevant': True},
+            {'name': 'batch_idx', 'value_range': list(range(64)), 'relevant': True},
         ])
     def run_with_params(self, params, model, diffusion):
         guider = None
@@ -363,9 +363,9 @@ if __name__ == "__main__":
     dist_util.setup_dist()
     shutil.rmtree('legacy/temp/',ignore_errors=True)
     os.makedirs('legacy/temp/',exist_ok=True)
-    ReconstructExperiment('8 bar prompt c',config,num_samples=4).run()
+    #ReconstructExperiment('8 bar prompt c',config,num_samples=4).run()
     #ChordExperiment('test',config,num_samples=4).run()
-    #ScratchExperiment('test',config,num_samples=4).run()
+    ScratchExperiment('b28',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
     #SkylineExperiment('Skyline',config,num_samples=4).run()
     #PolyphonyExperiment('Polyphony',config,num_samples=4).run()
