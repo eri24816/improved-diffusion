@@ -215,6 +215,12 @@ class PianoRoll:
     Type conversion
     ==================
     '''
+    def to_dict(self):
+        data = {"onset_events":[],"pedal_events":[]}
+        for note in self.notes:
+            data["onset_events"].append([note.onset,note.pitch,note.velocity])
+        data["pedal_events"] = self.pedal if self.pedal else []
+        return data
 
     def save(self,path):
 
@@ -255,7 +261,7 @@ class PianoRoll:
             piano_roll = piano_roll/64-1
         return piano_roll
     
-    def to_midi(self,path = None,apply_pedal = True) -> miditoolkit.midi.parser.MidiFile:
+    def to_midi(self,path = None,apply_pedal = True, bpm=105) -> miditoolkit.midi.parser.MidiFile:
         '''
         Convert the pianoroll to a midi file
         '''
@@ -270,13 +276,13 @@ class PianoRoll:
                 note.offset = offsets[i]
         else:
             assert self._have_offset, "Offset not found"
-        return self._save_to_midi([notes],path)
+        return self._save_to_midi([notes],path,bpm)
 
 
-    def _save_to_midi(self,instrs,path):
+    def _save_to_midi(self,instrs,path,bpm=105):
         midi = miditoolkit.midi.parser.MidiFile()
         midi.instruments = [miditoolkit.Instrument(program=0, is_drum=False, name=f'Piano{i}') for i in range(len(instrs))]
-        midi.tempo_changes.append(miditoolkit.TempoChange(144,0))
+        midi.tempo_changes.append(miditoolkit.TempoChange(bpm,0))
         for i,notes in enumerate(instrs):
             for onset, pitch, vel, offset in self.iter_over_notes(notes):
                 assert offset is not None, "Offset not found"
@@ -422,7 +428,7 @@ class PianoRoll:
         '''
         Randomly slice a pianoroll with length
         '''
-        start_time = random.randint(0,(self.duration - length)//32)*32
+        start_time = random.randint(0,max(0,(self.duration - length)//32))*32
         return self.slice(start_time,start_time+length)
 
     def get_random_tensor_clip(self,duration,normalized = False):

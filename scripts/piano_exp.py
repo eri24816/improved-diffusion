@@ -66,12 +66,13 @@ def sample_with_params(num_samples:int, exp_root_dir, exp_name, params, config, 
     exp_dir = os.path.join(exp_root_dir, exp_name)
     os.makedirs(exp_dir, exist_ok=True)
     sample_idx = 0
-    for _ in range(ceil(num_samples/conf['batch_size'])):
+    batch_size = min(num_samples,conf['batch_size'])
+    for _ in range(ceil(num_samples/batch_size)):
         model_kwargs = {}
         sample_fn = (
             diffusion.p_sample_loop if not conf['use_ddim'] else diffusion.ddim_sample_loop
         )
-        shape = (conf['batch_size'], len_dec*32 if len_dec !=0 else 180*32, 88)
+        shape = (batch_size, len_dec*32 if len_dec !=0 else 180*32, 88)
 
         if encoder is not None:
             model_kwargs["condition"] = generate_latent(conf, encoder, len_dec*32, exp_dir)
@@ -153,7 +154,8 @@ def get_base_songs(path, num_songs=None, num_per_song=1, length = 32*16):
             postfix = ''
         elif f.endswith('json'):
             pr = PianoRoll.load(f)
-            postfix = 'j'
+            #postfix = 'j'
+            postfix = ''
         else: continue
         for i in range(num_per_song):
             clip = pr.random_slice(length)
@@ -209,25 +211,27 @@ class ReconstructExperiment(Experiment):
             shutil.rmtree(os.path.join(self.exp_dir, 'base_songs'))
         os.makedirs(os.path.join(self.exp_dir, 'base_songs'), exist_ok=False)
         base_songs = get_base_songs(os.path.join(self.exp_root_dir,'base_songs'), num_songs=None, num_per_song=1, length = 32*16)
-        for name, bs in base_songs.items():
-            file_name = name+'.mid'
-            file_path = os.path.join(self.exp_dir, 'base_songs', file_name)
-            print('saving', file_path)
-            PianoRoll.from_tensor(bs,normalized=True,thres = 10).to_midi(file_path)
+        
+        # for name, bs in base_songs.items():
+        #     file_name = name+'.mid'
+        #     file_path = os.path.join(self.exp_dir, 'base_songs', file_name)
+        #     print('saving', file_path)
+        #     PianoRoll.from_tensor(bs,normalized=True,thres = 10).to_midi(file_path)
+
         return base_songs
 
     def get_param_space(self):
         self.base_songs = self.load_base_songs()
         return ParamSpace([
-            {'name': 'weight', 'value_range': [2,4,8], 'relevant': True},
+            {'name': 'weight', 'value_range': [8], 'relevant': True},
             {'name': 'base_song', 'value_range': list(self.base_songs.keys()), 'relevant': True},
-            {'name': 'model', 'value_range': ['c'], 'relevant': True},
+            {'name': 'model', 'value_range': ['c24'], 'relevant': True},
         ])
 
     def run_with_params(self, params, model, diffusion):
         x_a = self.base_songs[params['base_song']]
         mb = guiders.MaskBuilder(x_a)
-        a_mask = mb.FirstBars(8)
+        a_mask = mb.FirstBars(4)
         #a_mask = mb.Upper(65,True)
         #guider = guiders.ReconstructGuider(x_a,a_mask,10,diffusion.q_posterior_sample_loop)
         guider = guiders.ReconstructGuider(x_a,a_mask,params['weight'],None)
@@ -363,9 +367,9 @@ if __name__ == "__main__":
     dist_util.setup_dist()
     shutil.rmtree('legacy/temp/',ignore_errors=True)
     os.makedirs('legacy/temp/',exist_ok=True)
-    #ReconstructExperiment('8 bar prompt c',config,num_samples=4).run()
+    ReconstructExperiment('4-c24',config,num_samples=1).run()
     #ChordExperiment('test',config,num_samples=4).run()
-    ScratchExperiment('b28',config,num_samples=4).run()
+    #ScratchExperiment('b28',config,num_samples=4).run()
     #StrokeExperiment('Stroke',config,num_samples=4).run()
     #SkylineExperiment('Skyline',config,num_samples=4).run()
     #PolyphonyExperiment('Polyphony',config,num_samples=4).run()

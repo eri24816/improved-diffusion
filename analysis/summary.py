@@ -9,10 +9,10 @@ df = pandas.DataFrame()
 models = defaultdict(dict)
 metric_names = []
 if __name__ == '__main__':
-    for model in os.listdir(in_folder):
+    for model in sorted(os.listdir(in_folder)):
         models[model] = {}
         for file in os.listdir(in_folder + model):
-            if file.endswith('.json'):
+            if file.endswith('.json') and file != 'structure.json':
                 with open(in_folder + model + '/' + file) as f:
                     d = json.load(f)
                     d['model'] = model
@@ -31,12 +31,16 @@ if __name__ == '__main__':
             continue
         best_model = ''
         best_value = 1000000
-        for model, d in models.items():
-            if model == 'dataset':
+        for model, d in models.copy().items():
+            if model == 'test':
                 continue
-            if abs(d[metric]-float(models['dataset'][metric])) < best_value:
+            if metric not in d:
+                continue
+            if metric not in models['test']:
+                continue
+            if abs(d[metric]-float(models['test'][metric])) < best_value:
                 best_model = model
-                best_value = abs(d[metric]-float(models['dataset'][metric]))
+                best_value = abs(d[metric]-float(models['test'][metric]))
 
         row_of_best[metric] = best_model
 
